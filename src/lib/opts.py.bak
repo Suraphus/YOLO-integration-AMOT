@@ -170,10 +170,11 @@ class opts(object):
                                  type=float,
                                  default=100,
                                  help='filter out tiny boxes')
-
-	# detector
-        self.parser.add_argument('--use_yolo', action='store_true', help='use yolo as detector')
-        self.parser.add_argument('--yolo_model', type=str, default='', help='path to yolo weight')
+    #detector
+    self.parser.add_argument('--use_yolo', action='store_true',
+                                 help='ใช้ YOLO เป็น detector แทน mot_decode เดิม')
+    self.parser.add_argument('--yolo_model', type=str, default='',
+                                 help='path ของ YOLO weight (ใช้ตอน --use_yolo)')
 
         # 测试阶段的输入数据模式: video or image dir
         self.parser.add_argument('--input-mode',

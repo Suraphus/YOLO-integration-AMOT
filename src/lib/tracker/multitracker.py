@@ -16,30 +16,22 @@ from lib.tracking_utils.utils import *
 from lib.utils.post_process import ctdet_post_process
 from .basetrack import BaseTrack, MCBaseTrack, TrackState
 
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None  # ยังรัน baseline (ไม่ใช้ YOLO) ได้แม้ไม่มี ultralytics ติดตั้ง
+
 from lib.tracking_utils.gmc import GMC
 
 from gen_dataset_visdrone import cls2id, id2cls  # visdrone
 # from gen_labels_detrac_mcmot import cls2id, id2cls  # mcmot_c5
 
-# exp2 在exp1的基础上，保留轨迹的最新观测，但是感觉没写对，故建立exp3进行进一步修改
-# TODO: Multi-class Track class
 class MCTrack(MCBaseTrack):
     shared_kalman = KalmanFilter()
 
     def __init__(self, tlwh, score, temp_feat, num_classes, cls_id, buff_size=30):
-        """
-        :param tlwh:
-        :param score:
-        :param temp_feat:
-        :param num_classes:
-        :param cls_id:
-        :param buff_size:
-        """
-        # object class id
         self.cls_id = cls_id
-
-        # wait activate
-        self._tlwh = np.asarray(tlwh, dtype=np.float)
+        self._tlwh = np.asarray(tlwh, dtype=float)
 
         self.kalman_filter = None
         self.mean, self.covariance = None, None
@@ -50,18 +42,17 @@ class MCTrack(MCBaseTrack):
 
         self.smooth_feat = None
         self.update_features(temp_feat)
-        self.features = deque([], maxlen=buff_size)  # 指定了限制长度
+        self.features = deque([], maxlen=buff_size)
         self.alpha = 0.9
 
-        self.curr_tlwh = np.asarray(tlwh, dtype=np.float)
+        self.curr_tlwh = np.asarray(tlwh, dtype=float)
 
         self.tlwh_deque = deque([], maxlen=30)
 
     def update_features(self, feat, alpha=None):
-        # L2 normalizing
         feat /= np.linalg.norm(feat)
-        if alpha is not  None:
-            self.alpha= 1-alpha
+        if alpha is not None:
+            self.alpha = 1 - alpha
         else:
             self.alpha = 0.9
 
@@ -72,8 +63,6 @@ class MCTrack(MCBaseTrack):
             self.smooth_feat = self.alpha * self.smooth_feat + (1.0 - self.alpha) * feat
 
         self.features.append(feat)
-
-        # L2 normalizing
         self.smooth_feat /= np.linalg.norm(self.smooth_feat)
 
     def predict(self):
@@ -98,15 +87,12 @@ class MCTrack(MCBaseTrack):
                 tracks[i].mean = mean
                 tracks[i].covariance = cov
 
-
     def multi_gmc(stracks, H=np.eye(2, 3)):
         if len(stracks) > 0:
             multi_mean = np.asarray([st.mean.copy() for st in stracks])
             multi_covariance = np.asarray([st.covariance for st in stracks])
 
             R = H[:2, :2]
-
-            # keep larger scale factor only // 23.05.03 inpyosong
             larger_scale = max(R[0, 0], R[1, 1])
             uniform_scale_matrix = np.array([[larger_scale, 0], [0, larger_scale]])
             R = uniform_scale_matrix
@@ -126,33 +112,27 @@ class MCTrack(MCBaseTrack):
         self.reset_track_count(self.cls_id)
 
     def activate(self, kalman_filter, frame_id):
-        """Start a new track"""
-        self.kalman_filter = kalman_filter  # assign a filter to each track?
-
-        # update track id for the object class
+        self.kalman_filter = kalman_filter
         self.track_id = self.next_id(self.cls_id)
 
         self.mean, self.covariance = self.kalman_filter.initiate(self.tlwh_to_xyah(self._tlwh))
         self.curr_tlwh = self._tlwh
         self.track_len = 0
-        self.state = TrackState.Tracked  # set flag 'tracked'
+        self.state = TrackState.Tracked
 
         self.tlwh_deque.append((frame_id, self._tlwh))
 
-        # self.is_activated = True
-        if frame_id == 1:  # to record the first frame's detection result
+        if frame_id == 1:
             self.is_activated = True
 
         self.frame_id = frame_id
         self.start_frame = frame_id
 
     def re_activate(self, new_track, frame_id, new_id=False):
-        # kalman update
         self.mean, self.covariance = self.kalman_filter.update(self.mean,
                                                                self.covariance,
                                                                self.tlwh_to_xyah(new_track.tlwh))
 
-        # feature vector update
         self.update_features(new_track.curr_feat)
 
         self.curr_tlwh = new_track.curr_tlwh
@@ -161,40 +141,19 @@ class MCTrack(MCBaseTrack):
         self.track_len = 0
         self.frame_id = frame_id
 
-        self.state = TrackState.Tracked  # set flag 'tracked'
+        self.state = TrackState.Tracked
         self.is_activated = True
 
-        if new_id:  # update track id for the object class
+        if new_id:
             self.track_id = self.next_id(self.cls_id)
 
     def update_retrack(self, curr_tlwh, frame_id):
-        """
-        Update a matched track
-        :type new_track: Track
-        :type frame_id: int
-        :type update_feature: bool
-        :return:
-        """
         self.track_len += 1
-
-        self.state = TrackState.Tracked  # set flag 'tracked'
-
+        self.state = TrackState.Tracked
         self.curr_tlwh = curr_tlwh
-
         self.frame_id = frame_id
 
-        # self.mean, self.covariance = self.kalman_filter.update(
-        #     self.mean, self.covariance, self.tlwh_to_xyah(curr_tlwh)
-        # )
-
-    def update(self, new_track, frame_id, alpha=None,update_feature=True):
-        """
-        Update a matched track
-        :type new_track: Track
-        :type frame_id: int
-        :type update_feature: bool
-        :return:
-        """
+    def update(self, new_track, frame_id, alpha=None, update_feature=True):
         self.frame_id = frame_id
         self.track_len += 1
 
@@ -202,8 +161,8 @@ class MCTrack(MCBaseTrack):
         self.mean, self.covariance = self.kalman_filter.update(self.mean,
                                                                self.covariance,
                                                                self.tlwh_to_xyah(new_tlwh))
-        self.state = TrackState.Tracked  # set flag 'tracked'
-        self.is_activated = True  # set flag 'activated'
+        self.state = TrackState.Tracked
+        self.is_activated = True
 
         self.score = new_track.score
 
@@ -214,11 +173,7 @@ class MCTrack(MCBaseTrack):
             self.update_features(new_track.curr_feat, alpha)
 
     @property
-    # @jit(nopython=True)
     def tlwh(self):
-        """Get current position in bounding box format `(top left x, top left y,
-                width, height)`.
-        """
         if self.mean is None:
             return self._tlwh.copy()
 
@@ -228,21 +183,13 @@ class MCTrack(MCBaseTrack):
         return ret
 
     @property
-    # @jit(nopython=True)
     def tlbr(self):
-        """Convert bounding box to format `(min x, min y, max x, max y)`, i.e.,
-        `(top left, bottom right)`.
-        """
         ret = self.tlwh.copy()
         ret[2:] += ret[:2]
         return ret
 
     @staticmethod
-    # @jit(nopython=True)
     def tlwh_to_xyah(tlwh):
-        """Convert bounding box to format `(center x, center y, aspect ratio,
-        height)`, where the aspect ratio is `width / height`.
-        """
         ret = np.asarray(tlwh).copy()
         ret[:2] += ret[2:] / 2
         ret[2] /= ret[3]
@@ -252,14 +199,12 @@ class MCTrack(MCBaseTrack):
         return self.tlwh_to_xyah(self.tlwh)
 
     @staticmethod
-    # @jit(nopython=True)
     def tlbr_to_tlwh(tlbr):
-        ret = np.asarray(tlbr).copy()  # numpy中的.copy()是深拷贝
+        ret = np.asarray(tlbr).copy()
         ret[2:] -= ret[:2]
         return ret
 
     @staticmethod
-    # @jit(nopython=True)
     def tlwh_to_tlbr(tlwh):
         ret = np.asarray(tlwh).copy()
         ret[2:] += ret[:2]
@@ -273,55 +218,40 @@ class MCTrack(MCBaseTrack):
         return 'OT_({}-{})_({}-{})'.format(self.cls_id, self.track_id, self.start_frame, self.end_frame)
 
 
-
-# rewrite a post processing(without using affine matrix)
 def map2orig(dets, h_out, w_out, h_orig, w_orig, num_classes):
-    """
-    :param dets:
-    :param h_out:
-    :param w_out:
-    :param h_orig:
-    :param w_orig:
-    :param num_classes:
-    :return: dict of detections(key: cls_id)
-    """
-
     def get_padding():
-        """
-        :return: pad_1, pad_2, pad_type('pad_x' or 'pad_y'), new_shape(w, h)
-        """
         ratio_x = float(w_out) / w_orig
         ratio_y = float(h_out) / h_orig
         ratio = min(ratio_x, ratio_y)
-        new_shape = (round(w_orig * ratio), round(h_orig * ratio))  # new_w, new_h
+        new_shape = (round(w_orig * ratio), round(h_orig * ratio))
 
-        pad_x = (w_out - new_shape[0]) * 0.5  # width padding
-        pad_y = (h_out - new_shape[1]) * 0.5  # height padding
+        pad_x = (w_out - new_shape[0]) * 0.5
+        pad_y = (h_out - new_shape[1]) * 0.5
         top, bottom = round(pad_y - 0.1), round(pad_y + 0.1)
         left, right = round(pad_x - 0.1), round(pad_x + 0.1)
-        if ratio == ratio_x:  # pad_y
+        if ratio == ratio_x:
             return top, bottom, 'pad_y', new_shape
-        else:  # pad_x
+        else:
             return left, right, 'pad_x', new_shape
 
     pad_1, pad_2, pad_type, new_shape = get_padding()
 
     dets = dets.detach().cpu().numpy()
-    dets = dets.reshape(1, -1, dets.shape[2])  # default: 1×128×6
-    dets = dets[0]  # 128×6
+    dets = dets.reshape(1, -1, dets.shape[2])
+    dets = dets[0]
 
     dets_dict = {}
 
     if pad_type == 'pad_x':
-        dets[:, 0] = (dets[:, 0] - pad_1) / new_shape[0] * w_orig  # x1
-        dets[:, 2] = (dets[:, 2] - pad_1) / new_shape[0] * w_orig  # x2
-        dets[:, 1] = dets[:, 1] / h_out * h_orig  # y1
-        dets[:, 3] = dets[:, 3] / h_out * h_orig  # y2
-    else:  # 'pad_y'
-        dets[:, 0] = dets[:, 0] / w_out * w_orig  # x1
-        dets[:, 2] = dets[:, 2] / w_out * w_orig  # x2
-        dets[:, 1] = (dets[:, 1] - pad_1) / new_shape[1] * h_orig  # y1
-        dets[:, 3] = (dets[:, 3] - pad_1) / new_shape[1] * h_orig  # y2
+        dets[:, 0] = (dets[:, 0] - pad_1) / new_shape[0] * w_orig
+        dets[:, 2] = (dets[:, 2] - pad_1) / new_shape[0] * w_orig
+        dets[:, 1] = dets[:, 1] / h_out * h_orig
+        dets[:, 3] = dets[:, 3] / h_out * h_orig
+    else:
+        dets[:, 0] = dets[:, 0] / w_out * w_orig
+        dets[:, 2] = dets[:, 2] / w_out * w_orig
+        dets[:, 1] = (dets[:, 1] - pad_1) / new_shape[1] * h_orig
+        dets[:, 3] = (dets[:, 3] - pad_1) / new_shape[1] * h_orig
 
     classes = dets[:, -1]
     for cls_id in range(num_classes):
@@ -331,31 +261,60 @@ def map2orig(dets, h_out, w_out, h_orig, w_orig, num_classes):
     return dets_dict
 
 
+def orig2map(boxes_xyxy, h_out, w_out, h_orig, w_orig):
+    """
+    แปลงพิกัด box จากภาพต้นฉบับ (h_orig, w_orig)
+    ให้เป็นพิกัดบน feature grid (h_out, w_out)
+    ใช้สำหรับ sample id_feature ตรงตำแหน่งที่ YOLO ตรวจเจอเท่านั้น
+    """
+    ratio_x = float(w_out) / w_orig
+    ratio_y = float(h_out) / h_orig
+    ratio = min(ratio_x, ratio_y)
+    new_w, new_h = round(w_orig * ratio), round(h_orig * ratio)
+    pad_x = (w_out - new_w) * 0.5
+    pad_y = (h_out - new_h) * 0.5
+
+    boxes = boxes_xyxy.copy().astype(np.float32)
+    boxes[:, [0, 2]] = boxes[:, [0, 2]] * ratio + pad_x
+    boxes[:, [1, 3]] = boxes[:, [1, 3]] * ratio + pad_y
+    return boxes
+
+
 class MCJDETracker(object):
     def __init__(self, opt, frame_rate=30):
         self.opt = opt
 
-        # ----- init model
         print('Creating model...')
         self.model = create_model(opt.arch, opt.heads, opt.head_conv)
-        self.model = load_model(self.model, opt.load_model)  # load specified checkpoint
+        self.model = load_model(self.model, opt.load_model)
         self.model = self.model.to(opt.device)
         self.model.eval()
 
-        # ----- track_lets
-        self.tracked_tracks_dict = defaultdict(list)  # value type: list[STrack]
-        self.lost_tracks_dict = defaultdict(list)  # value type: list[STrack]
-        self.removed_tracks_dict = defaultdict(list)  # value type: list[STrack]
+        # ----- YOLO detector: โหลดเฉพาะตอนตั้ง --use_yolo (กันเสียเวลาตอนรัน baseline) -----
+        self.use_yolo = getattr(opt, 'use_yolo', False)
+        if self.use_yolo:
+            if YOLO is None:
+                raise ImportError("ตั้ง --use_yolo ไว้แต่ยังไม่ได้ pip install ultralytics")
+            yolo_weight_path = getattr(opt, 'yolo_model', None) \
+                or '/home/suraphus/amot_workspace/AMOT/models/yolo_best.pt'
+            print('Creating YOLO detector from: {}'.format(yolo_weight_path))
+            self.detector = YOLO(yolo_weight_path)
+        else:
+            self.detector = None
+            print('ใช้ mot_decode เดิมของ AMOT (baseline, ไม่ใช้ YOLO)')
+
+        self.tracked_tracks_dict = defaultdict(list)
+        self.lost_tracks_dict = defaultdict(list)
+        self.removed_tracks_dict = defaultdict(list)
 
         self.frame_id = 0
         self.det_thresh = opt.conf_thres
-        self.buffer_size = int(frame_rate / 30.0 * opt.track_buffer)  # int(frame_rate / 30.0 * opt.track_buffer)
+        self.buffer_size = int(frame_rate / 30.0 * opt.track_buffer)
         self.max_time_lost = self.buffer_size
-        self.max_per_image = self.opt.K  # max objects per image
+        self.max_per_image = self.opt.K
         self.mean = np.array(opt.mean, dtype=np.float32).reshape(1, 1, 3)
         self.std = np.array(opt.std, dtype=np.float32).reshape(1, 1, 3)
 
-        # ----- using kalman filter to stabilize tracking
         self.kalman_filter = KalmanFilter()
 
         self.past_id_feature = deque([], maxlen=2)
@@ -364,46 +323,26 @@ class MCJDETracker(object):
         self.gmc = GMC(method='sparseOptFlow', verbose=[None, False])
 
     def reset(self):
-        """
-        :return:
-        """
-        # Reset tracks dict
-        self.tracked_tracks_dict = defaultdict(list)  # value type: list[Track]
-        self.lost_tracks_dict = defaultdict(list)  # value type: list[Track]
-        self.removed_tracks_dict = defaultdict(list)  # value type: list[Track]
-
-        # Reset frame id
+        self.tracked_tracks_dict = defaultdict(list)
+        self.lost_tracks_dict = defaultdict(list)
+        self.removed_tracks_dict = defaultdict(list)
         self.frame_id = 0
-
-        # Reset kalman filter to stabilize tracking
         self.kalman_filter = KalmanFilter()
 
     def post_process(self, dets, meta):
-        """
-        2D bbox检测结果后处理
-        :param dets:
-        :param meta:
-        :return:
-        """
         dets = dets.detach().cpu().numpy()
-        dets = dets.reshape(1, -1, dets.shape[2])  # default: 1×128×6
+        dets = dets.reshape(1, -1, dets.shape[2])
 
-        # affine transform
         dets = ctdet_post_process(dets.copy(),
                                   [meta['c']], [meta['s']],
                                   meta['out_height'],
                                   meta['out_width'],
                                   self.opt.num_classes)
 
-        dets = dets[0]  # fetch the first image dets results(batch_size = 1 by default)
-
+        dets = dets[0]
         return dets
 
     def merge_outputs(self, detections):
-        """
-        :param detections:
-        :return:
-        """
         results = {}
         for j in range(1, self.opt.num_classes + 1):
             results[j] = np.concatenate([detection[j] for detection in detections],
@@ -419,28 +358,20 @@ class MCJDETracker(object):
 
         return results
 
-    def update_tracking(self,im_blob, img_0):
-        """
-        :param im_blob:
-        :param img_0:
-        :return:
-        """
-        # update frame id
+    def update_tracking(self, im_blob, img_0):
         self.frame_id += 1
 
-        # ----- reset the track ids for all object classes in the first frame
         if self.frame_id == 1:
             MCTrack.init_count(self.opt.num_classes)
 
-        # record tracking results, key: class_id
         activated_tracks_dict = defaultdict(list)
         refined_tracks_dict = defaultdict(list)
         lost_tracks_dict = defaultdict(list)
         removed_tracks_dict = defaultdict(list)
         output_tracks_dict = defaultdict(list)
 
-        height, width = img_0.shape[0], img_0.shape[1]  # H, W of original input image
-        net_height, net_width = im_blob.shape[2], im_blob.shape[3]  # H, W of net input
+        height, width = img_0.shape[0], img_0.shape[1]
+        net_height, net_width = im_blob.shape[2], im_blob.shape[3]
 
         c = np.array([width * 0.5, height * 0.5], dtype=np.float32)
         s = max(float(net_width) / float(net_height) * height, width) * 1.0
@@ -450,49 +381,60 @@ class MCJDETracker(object):
         ''' Step 1: Network forward, get detections & embeddings'''
         with torch.no_grad():
             output = self.model.forward(im_blob)[-1]
-            hm = output['hm'].sigmoid_()
-            wh = output['wh']
             reg = output['reg'] if self.opt.reg_offset else None
             id_feature = output['id']
-
-            # L2 normalize the reid feature vector
             id_feature = F.normalize(id_feature, dim=1)
-
             self.past_id_feature.append(id_feature)
-            self.past_reg.append(reg)
+            self.past_reg.append(reg)  # AMC/MTC ยังใช้ dense map ตามเดิม ไม่แตะ ไม่ว่าจะใช้ detector ไหน
 
-            #  detection decoding
-            dets, inds, cls_inds_mask = mot_decode(heatmap=hm,
-                                                   wh=wh,
-                                                   reg=reg,
-                                                   num_classes=self.opt.num_classes,
-                                                   cat_spec_wh=self.opt.cat_spec_wh,
-                                                   K=self.opt.K)
+            if self.use_yolo:
+                # ----- ใช้ YOLO เป็น detector -----
+                yolo_res = self.detector.predict(img_0, conf=getattr(self.opt, 'yolo_conf', 0.1), imgsz=960, verbose=False)[0]
+                boxes_xyxy = yolo_res.boxes.xyxy.cpu().numpy()
+                scores = yolo_res.boxes.conf.cpu().numpy()
+                yolo_cls = yolo_res.boxes.cls.cpu().numpy().astype(int)
 
-            # ----- get ReID feature vector by object class
-            cls_id_feats = []  # topK feature vectors of each object class
-            for cls_id in range(self.opt.num_classes):  # cls_id starts from 0
-                # get inds of each object class
-                cls_inds = inds[:, cls_inds_mask[cls_id]]
+                grid_boxes = orig2map(boxes_xyxy, h_out, w_out, height, width)
+                cx = ((grid_boxes[:, 0] + grid_boxes[:, 2]) / 2).clip(0, w_out - 1).astype(np.int64)
+                cy = ((grid_boxes[:, 1] + grid_boxes[:, 3]) / 2).clip(0, h_out - 1).astype(np.int64)
+                flat_inds = torch.from_numpy(cy * w_out + cx).unsqueeze(0).to(self.opt.device)
 
-                # gather feats for each object class
-                cls_id_feature = _tranpose_and_gather_feat(id_feature, cls_inds)  # inds: 1×128
-                cls_id_feature = cls_id_feature.squeeze(0)  # n × FeatDim
-                cls_id_feature = cls_id_feature.cpu().numpy()
-                cls_id_feats.append(cls_id_feature)
+                sampled_feat = _tranpose_and_gather_feat(id_feature, flat_inds).squeeze(0).cpu().numpy()
 
-        # translate and scale
-        dets = map2orig(dets, h_out, w_out, height, width, self.opt.num_classes)
-        # ----- parse each object class
+                dets_np = np.concatenate([boxes_xyxy, scores[:, None], yolo_cls[:, None]], axis=1)
+                dets = {cls_id: dets_np[yolo_cls == cls_id] for cls_id in range(self.opt.num_classes)}
+                cls_id_feats = [sampled_feat[yolo_cls == cls_id] for cls_id in range(self.opt.num_classes)]
+
+            else:
+                # ----- baseline: mot_decode เดิมของ AMOT (DLA heatmap เท่านั้น) -----
+                hm = output['hm'].sigmoid_()
+                wh = output['wh']
+
+                dets, inds, cls_inds_mask = mot_decode(heatmap=hm,
+                                                       wh=wh,
+                                                       reg=reg,
+                                                       num_classes=self.opt.num_classes,
+                                                       cat_spec_wh=self.opt.cat_spec_wh,
+                                                       K=self.opt.K)
+
+                cls_id_feats = []
+                for cls_id in range(self.opt.num_classes):
+                    cls_inds = inds[:, cls_inds_mask[cls_id]]
+                    cls_id_feature = _tranpose_and_gather_feat(id_feature, cls_inds)
+                    cls_id_feature = cls_id_feature.squeeze(0).cpu().numpy()
+                    cls_id_feats.append(cls_id_feature)
+
+                dets = map2orig(dets, h_out, w_out, height, width, self.opt.num_classes)
+
+        # ----- parse each object class (ใช้ได้กับทั้ง 2 ทาง เพราะ format ตรงกัน) -----
         for cls_id in range(self.opt.num_classes):
             cls_dets = dets[cls_id]
 
-            # filter out low confidence detections
             remain_inds = cls_dets[:, 4] > self.opt.conf_thres
 
             if cls_id == 4:
                 inds_low = cls_dets[:, 4] > 1
-            elif cls_id == 5 or cls_id==8:
+            elif cls_id == 5 or cls_id == 8:
                 inds_low = cls_dets[:, 4] > 0.1
             else:
                 inds_low = cls_dets[:, 4] > 0.2
@@ -506,7 +448,6 @@ class MCJDETracker(object):
             cls_id_feature = cls_id_feats[cls_id][remain_inds]
 
             if len(cls_dets) > 0:
-                '''Detections, tlbrs: top left bottom right score'''
                 cls_detects = [
                     MCTrack(MCTrack.tlbr_to_tlwh(tlbrs[:4]), tlbrs[4], feat, self.opt.num_classes, cls_id, 30)
                     for (tlbrs, feat) in zip(cls_dets[:, :5], cls_id_feature)
@@ -522,8 +463,6 @@ class MCJDETracker(object):
             else:
                 cls_detects_second = []
 
-
-            ''' Add newly detected tracks to tracked_tracks'''
             unconfirmed_dict = defaultdict(list)
             tracked_tracks_dict = defaultdict(list)
             for track in self.tracked_tracks_dict[cls_id]:
@@ -532,8 +471,6 @@ class MCJDETracker(object):
                 else:
                     tracked_tracks_dict[cls_id].append(track)
 
-            # building tracking pool for the current frame
-            # Predict the current location with KF
             MCTrack.multi_predict(self.lost_tracks_dict[cls_id])
             MCTrack.multi_predict(tracked_tracks_dict[cls_id])
 
@@ -544,7 +481,7 @@ class MCJDETracker(object):
             dist_off = matching.reid_motion(track_pool_dict[cls_id], cls_detects, self.past_id_feature,
                                             self.past_reg, h_out, w_out, height, width)
             dists = matching.embedding_distance(track_pool_dict[cls_id], cls_detects)
-            dist_iou = matching.iou_distance(track_pool_dict[cls_id], cls_detects)* dist_off
+            dist_iou = matching.iou_distance(track_pool_dict[cls_id], cls_detects) * dist_off
             dist_iou = matching.fuse_score_three(dist_iou, dists, cls_detects)
 
             matches, u_track, u_detection = matching.linear_assignment(dist_iou, thresh=0.6)
@@ -554,7 +491,7 @@ class MCJDETracker(object):
                 det = cls_detects[i_det]
                 if track.state == TrackState.Tracked:
                     track.update(cls_detects[i_det], self.frame_id)
-                    activated_tracks_dict[cls_id].append(track)  # for multi-class
+                    activated_tracks_dict[cls_id].append(track)
                 else:
                     track.re_activate(det, self.frame_id, new_id=False)
                     refined_tracks_dict[cls_id].append(track)
@@ -577,8 +514,6 @@ class MCJDETracker(object):
                     track.re_activate(det, self.frame_id, new_id=False)
                     refined_tracks_dict[cls_id].append(track)
 
-            """association the untrack to the low score detections"""
-
             second_tracked_tracks = [r_tracked_tracks[i] for i in u_track]
             dist_iou = matching.iou_distance(second_tracked_tracks, cls_detects_second)
             matches, u_track, u_detection_second = matching.linear_assignment(dist_iou, thresh=0.2)
@@ -588,7 +523,7 @@ class MCJDETracker(object):
                 det = cls_detects_second[i_det]
                 if track.state == TrackState.Tracked:
                     track.update(cls_detects_second[i_det], self.frame_id)
-                    activated_tracks_dict[cls_id].append(track)  # for multi-class
+                    activated_tracks_dict[cls_id].append(track)
                 else:
                     track.re_activate(det, self.frame_id, new_id=False)
                     refined_tracks_dict[cls_id].append(track)
@@ -604,7 +539,7 @@ class MCJDETracker(object):
                     lost_tracks_dict[cls_id].append(track)
                     continue
 
-                if len(track.tlwh_deque) < 10: # 10 for frame1-2-3
+                if len(track.tlwh_deque) < 10:
                     track.mark_lost()
                     lost_tracks_dict[cls_id].append(track)
                     continue
@@ -624,7 +559,7 @@ class MCJDETracker(object):
                 if (
                         x <= margin or y <= margin or
                         (x + w) >= (width - margin) or
-                        (y + h) >= (height - margin) and len(track.tlwh_deque) >0
+                        (y + h) >= (height - margin) and len(track.tlwh_deque) > 0
                 ):
                     track.mark_removed()
                     removed_tracks_dict[cls_id].append(track)
@@ -637,7 +572,7 @@ class MCJDETracker(object):
                 )
 
                 dist = np.sqrt(np.sum((center_pred - pred_off) ** 2))
-                if dist <= 3                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   :
+                if dist <= 3:
                     if len(cls_detects) > 0:
                         iou_dist_1 = 1 - matching.iou_distance([track], cls_detects)
                         min_dist_1 = iou_dist_1.max()
@@ -650,11 +585,9 @@ class MCJDETracker(object):
                     else:
                         min_dist_2 = 0
 
-                    if min_dist_1 <= 2 and min_dist_2 <= 2:  # IOU < 0.2
-                        # print(dist, min_dist_1, min_dist_2)
+                    if min_dist_1 <= 2 and min_dist_2 <= 2:
                         track.update_retrack(track.tlwh, self.frame_id)
                         activated_tracks_dict[cls_id].append(track)
-
                     else:
                         track.mark_lost()
                         lost_tracks_dict[cls_id].append(track)
@@ -662,7 +595,6 @@ class MCJDETracker(object):
                     track.mark_lost()
                     lost_tracks_dict[cls_id].append(track)
 
-            '''Deal with unconfirmed tracks, usually tracks with only one beginning frame'''
             cls_detects = [cls_detects[i] for i in u_detection]
             dist_off = matching.reid_motion_unconfirmed(unconfirmed_dict[cls_id], cls_detects, self.past_id_feature,
                                                         self.past_reg, h_out, w_out, height, width)
@@ -677,7 +609,6 @@ class MCJDETracker(object):
                 track.mark_removed()
                 removed_tracks_dict[cls_id].append(track)
 
-            """ Step 4: Init new tracks"""
             for i_new in u_detection:
                 track = cls_detects[i_new]
                 if track.score < self.det_thresh:
@@ -686,7 +617,6 @@ class MCJDETracker(object):
                 track.activate(self.kalman_filter, self.frame_id)
                 activated_tracks_dict[cls_id].append(track)
 
-            """ Step 5: Update state"""
             for track in self.lost_tracks_dict[cls_id]:
                 if self.frame_id - track.end_frame > self.max_time_lost:
                     track.mark_removed()
@@ -708,7 +638,6 @@ class MCJDETracker(object):
                 self.tracked_tracks_dict[cls_id],
                 self.lost_tracks_dict[cls_id])
 
-            # get scores of lost tracks
             output_tracks_dict[cls_id] = [track for track in self.tracked_tracks_dict[cls_id] if track.is_activated]
 
             logger.debug('===========Frame {}=========='.format(self.frame_id))
@@ -723,13 +652,8 @@ class MCJDETracker(object):
 
         return output_tracks_dict
 
+
 def join_tracks(t_list_a, t_list_b):
-    """
-    join two track lists
-    :param t_list_a:
-    :param t_list_b:
-    :return:
-    """
     exists = {}
     res = []
     for t in t_list_a:

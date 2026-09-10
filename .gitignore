@@ -1,0 +1,18 @@
+# วิดีโอและเฟรมภาพ (ใหญ่เกินไป)
+videos/
+output_videos/
+*.mp4
+*.avi
+*_frames/
+
+# Model weights (ใหญ่เกินไป)
+models/*.pth
+models/*.pt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Conda/environment
+*.egg-info/
