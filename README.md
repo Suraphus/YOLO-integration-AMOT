@@ -14,17 +14,26 @@ Fork ของ AMOT ต้นฉบับ (borrow จาก [FairMOT](https://gi
 
 ## ติดตั้ง
 
+ต้องใช้ **Python 3.10–3.12** (PyTorch ยังไม่มี wheel รองรับ Python เวอร์ชันใหม่กว่านี้) แนะนำสร้าง conda env แยกต่างหาก:
+
 ```bash
+conda create -n amot python=3.11 -y
+conda activate amot
+
 git clone https://github.com/Suraphus/YOLO-integration-AMOT.git
 cd YOLO-integration-AMOT
 pip install -r requirements.txt
-pip install torch torchvision       # เลือกเวอร์ชันให้ตรงกับ CUDA ของเครื่อง
 pip install ultralytics             # จำเป็นเฉพาะถ้าจะใช้ --use_yolo
 
-cd DCNv2 && python3 setup.py build develop && cd ..   # compile custom DCN op
+# เช็ค CUDA toolkit ของเครื่องก่อน (nvcc --version) แล้วเลือก index ให้ตรงกัน เช่น cu124 ถ้า nvcc เป็น 12.4
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+cd DCNv2 && pip install -e . --no-build-isolation && cd ..   # compile custom DCN op
 ```
 
 ไม่มี GPU ก็รันได้ (fallback เป็น CPU implementation ของ DCNv2 อัตโนมัติ แต่ช้ากว่ามาก)
+
+> หมายเหตุ: ใช้ `pip install -e . --no-build-isolation` แทน `python setup.py build develop` (คำสั่งเดิม deprecated แล้วในเวอร์ชัน setuptools ใหม่ๆ และ default ของ pip จะสร้าง isolated build env ที่ไม่มี torch ติดตั้งอยู่ ทำให้ build fail)
 
 เตรียมข้อมูล (VisDrone / UAVDT / VT-MOT-UAV) และ environment เพิ่มเติม ดูตาม [STCMOT](https://github.com/ydhcg-BoBo/STCMOT) ที่ AMOT สืบทอด pipeline มา — แก้ path ให้ตรงเครื่องตัวเองใน `src/lib/cfg/*.json` ก่อนใช้งาน
 
