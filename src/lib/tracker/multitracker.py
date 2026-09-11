@@ -303,6 +303,7 @@ class MCJDETracker(object):
                 )
             print('Creating YOLO detector from: {}'.format(yolo_weight_path))
             self.detector = YOLO(yolo_weight_path)
+            self._check_yolo_class_mapping()
         else:
             self.detector = None
             print('ใช้ mot_decode เดิมของ AMOT (baseline, ไม่ใช้ YOLO)')
@@ -325,6 +326,46 @@ class MCJDETracker(object):
         self.past_reg = deque([], maxlen=2)
 
         self.gmc = GMC(method='sparseOptFlow', verbose=[None, False])
+
+    def _check_yolo_class_mapping(self):
+        """
+        ตรวจสอบว่า class index ของ YOLO (self.detector.names) ตรงกับ id2cls ของ AMOT/VisDrone หรือไม่
+        สำคัญมาก: ถ้าลำดับคลาสตอนเทรน YOLO ไม่ตรงกับ cls2id ใน gen_dataset_visdrone.py
+        กล่องที่ YOLO เจอจะถูกจัดเข้าคลาสผิดแบบเงียบๆ (ไม่มี error ใดๆ ขึ้นระหว่างรัน)
+        ทำให้ผลลัพธ์การ track (และผลจาก compare/analyze scripts) ผิดเพี้ยนทั้งหมดโดยไม่รู้ตัว
+        """
+        yolo_names = getattr(self.detector, 'names', None)
+        if not yolo_names:
+            print('⚠️  ไม่พบ .names ใน YOLO model — ข้ามการตรวจสอบ class mapping อัตโนมัติ '
+                  '(กรุณาตรวจสอบเองว่าลำดับคลาสตอนเทรน YOLO ตรงกับ id2cls ใน gen_dataset_visdrone.py)')
+            return
+
+        n_yolo = len(yolo_names)
+        n_amot = len(id2cls)
+
+        print('ตรวจสอบ class mapping ระหว่าง YOLO กับ AMOT (id2cls):')
+        mismatches = []
+        for i in range(max(n_yolo, n_amot)):
+            yolo_name = yolo_names.get(i, '<missing>')
+            amot_name = id2cls.get(i, '<missing>')
+            match = str(yolo_name).strip().lower() == str(amot_name).strip().lower()
+            if not match:
+                mismatches.append(i)
+            print('  id {}: yolo="{}"  amot="{}"{}'.format(
+                i, yolo_name, amot_name, '' if match else '   <-- ไม่ตรงกัน!'))
+
+        if n_yolo != n_amot:
+            raise ValueError(
+                "จำนวนคลาสของ YOLO ({}) ไม่เท่ากับจำนวนคลาสของ AMOT/VisDrone ({}) "
+                "ตรวจสอบว่าใช้ weight ที่เทรนด้วย class set ที่ถูกต้องหรือไม่".format(n_yolo, n_amot)
+            )
+        if mismatches:
+            print(
+                '⚠️  คำเตือน: ชื่อคลาสของ YOLO กับ AMOT ไม่ตรงกันที่ id {} '
+                'ถ้าลำดับคลาสตอนเทรน YOLO ไม่ตรงกับ VisDrone mapping (cls2id ใน gen_dataset_visdrone.py) '
+                'detection จะถูกจัดเข้าคลาสผิดแบบเงียบๆ โปรดตรวจสอบ data.yaml ที่ใช้เทรน YOLO ให้ดีก่อนเชื่อผลลัพธ์'
+                .format(mismatches)
+            )
 
     def reset(self):
         self.tracked_tracks_dict = defaultdict(list)
