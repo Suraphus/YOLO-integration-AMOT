@@ -37,7 +37,6 @@ def main():
     parser.add_argument('--output', default='output.mp4', help='path วิดีโอผลลัพธ์')
     parser.add_argument('--frames-dir', default='./demo_output_frames', help='โฟลเดอร์เก็บเฟรมรายภาพ')
     parser.add_argument('--conf-thres', type=float, default=0.4, help='ลดจาก default 0.4 ถ้าเจอ missing detection')
-    parser.add_argument('--det-thres', type=float, default=0.3, help='ลดจาก default 0.3 ถ้าเจอ missing detection')
     parser.add_argument('--track-buffer', type=int, default=30, help='เพิ่มถ้าเจอ ID switch บ่อยตอนวัตถุถูกบัง')
     parser.add_argument('--use_yolo', action='store_true')
     parser.add_argument('--yolo-model', type=str, default='') 
@@ -60,7 +59,6 @@ def main():
     opt.yolo_model = args.yolo_model
     opt.yolo_conf = args.yolo_conf
     opt.conf_thres = args.conf_thres
-    opt.det_thres = args.det_thres
     opt.track_buffer = args.track_buffer
     opt.load_model = args.model
     opt.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
