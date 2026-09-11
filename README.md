@@ -31,7 +31,7 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 cd DCNv2 && pip install -e . --no-build-isolation && cd ..   # compile custom DCN op
 ```
 
-ไม่มี GPU ก็รันได้ (fallback เป็น CPU implementation ของ DCNv2 อัตโนมัติ แต่ช้ากว่ามาก)
+DCNv2 build ได้แม้ไม่มี GPU (fallback เป็น CPU implementation อัตโนมัติ) — แต่ตอนรัน tracker จริง มีแค่ `run_tracking.py` เท่านั้นที่ fallback ไป CPU ให้อัตโนมัติถ้าไม่เจอ GPU ส่วน `track_AMOT.py` (benchmark script) hardcode ไว้ให้ใช้ `cuda:0` เสมอ **ต้องมี GPU เท่านั้นถึงจะรันได้**
 
 > หมายเหตุ: ใช้ `pip install -e . --no-build-isolation` แทน `python setup.py build develop` (คำสั่งเดิม deprecated แล้วในเวอร์ชัน setuptools ใหม่ๆ และ default ของ pip จะสร้าง isolated build env ที่ไม่มี torch ติดตั้งอยู่ ทำให้ build fail)
 
