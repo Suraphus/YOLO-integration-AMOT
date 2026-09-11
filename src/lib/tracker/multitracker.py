@@ -295,8 +295,12 @@ class MCJDETracker(object):
         if self.use_yolo:
             if YOLO is None:
                 raise ImportError("ตั้ง --use_yolo ไว้แต่ยังไม่ได้ pip install ultralytics")
-            yolo_weight_path = getattr(opt, 'yolo_model', None) \
-                or '/home/suraphus/amot_workspace/AMOT/models/yolo_best.pt'
+            yolo_weight_path = getattr(opt, 'yolo_model', None)
+            if not yolo_weight_path:
+                raise ValueError(
+                    "ตั้ง --use_yolo ไว้แต่ไม่ได้ระบุ --yolo_model "
+                    "กรุณาระบุ path ไปยังไฟล์ weight ของ YOLO (เช่น --yolo_model /path/to/yolo_best.pt)"
+                )
             print('Creating YOLO detector from: {}'.format(yolo_weight_path))
             self.detector = YOLO(yolo_weight_path)
         else:
