@@ -16,3 +16,9 @@ __pycache__/
 
 # Conda/environment
 *.egg-info/
+
+# IDE
+.idea/
+
+# Backup files
+*.bak
