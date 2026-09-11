@@ -45,24 +45,33 @@ cd DCNv2 && pip install -e . --no-build-isolation && cd ..   # compile custom DC
 | VT-MOT-UAV | [BaiduDrive](https://pan.baidu.com/s/1FcPbXRnFAiNAc-oY2m1a3g?pwd=2026) (password: 2026)   |
 | YOLO detector (`yolo_best.pt`) + `visdrone.pth` ที่ใช้ทดสอบใน fork นี้ | [Google Drive](https://drive.google.com/drive/folders/1PP_hzTe_zri7i2YmqNKfhtMgavjXLxiG?usp=sharing) |
 
+วาง `.pth`/`.pt` ที่ดาวน์โหลดมาไว้ในโฟลเดอร์ `models/` ที่ root ของ repo (สร้างเองถ้ายังไม่มี — `.gitignore` กัน `models/*.pth` และ `models/*.pt` ไว้ให้แล้ว จะไม่หลุดเข้า git):
+
+```bash
+mkdir -p models
+mv ~/Downloads/visdrone.pth ~/Downloads/yolo_best.pt models/
+```
+
+ตำแหน่งไม่ได้ล็อกตายตัว — ทุกคำสั่งด้านล่างรับ path ผ่าน `--load_model`/`--model`/`--yolo-model` โดยตรง ใช้ `models/` แค่เป็น convention กลางให้ทั้งทีม path ตรงกัน
+
 ## รัน
 
 **Benchmark เดิม (VisDrone test set, เทียบ GT):**
 ```bash
 cd src
-python track_AMOT.py --load_model /path/to/visdrone.pth --data_dir /path/to/UAVdata
+python track_AMOT.py --load_model ../models/visdrone.pth --data_dir /path/to/UAVdata
 ```
 
 **รันวิดีโอของตัวเอง (local, ไม่ต้องมี GT):**
 ```bash
 cd src
-python run_tracking.py --video clip.mp4 --model visdrone.pth --output out.mp4
+python run_tracking.py --video clip.mp4 --model ../models/visdrone.pth --output out.mp4
 ```
 ดู `python run_tracking.py --help` สำหรับ argument ทั้งหมด (conf-thres, track-buffer, ฯลฯ)
 
 ## YOLO Integration
 
-เพิ่ม `--use_yolo --yolo-model /path/to/yolo_best.pt` เข้าไปที่คำสั่ง `run_tracking.py` ด้านบน (`--yolo-conf` ปรับ threshold ของ YOLO เอง default 0.1)
+เพิ่ม `--use_yolo --yolo-model ../models/yolo_best.pt` เข้าไปที่คำสั่ง `run_tracking.py` ด้านบน (`--yolo-conf` ปรับ threshold ของ YOLO เอง default 0.1)
 
 > ⚠️ **ทุกครั้งที่โหลด YOLO detector โปรแกรมจะ print ตารางเทียบ class mapping ระหว่าง YOLO กับ `id2cls` ของ AMOT (`gen_dataset_visdrone.py`) ให้ตรวจดูก่อนเสมอ** — ถ้าลำดับคลาสไม่ตรงกัน detection จะถูกจัดเข้าคลาสผิดแบบเงียบๆ โดยไม่มี error ถ้าเจอ mismatch ไม่ต้องเทรน YOLO ใหม่ แก้ที่โค้ด (remap ตามชื่อคลาส) ได้
 
