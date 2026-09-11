@@ -34,6 +34,7 @@ cd DCNv2 && python3 setup.py build develop && cd ..   # compile custom DCN op
 | Visdrone   | [BaiduDrive](https://pan.baidu.com/s/1BjGru5Xoi8tuejdG8VsnMw?pwd=2026) (password: 2026)   |
 | UAVDT      | [BaiduDrive](https://pan.baidu.com/s/1WX2zLrNSTRlekhWUhcJLQw?pwd=2026) (password: 2026)   |
 | VT-MOT-UAV | [BaiduDrive](https://pan.baidu.com/s/1FcPbXRnFAiNAc-oY2m1a3g?pwd=2026) (password: 2026)   |
+| YOLO detector (`yolo_best.pt`) + `visdrone.pth` ที่ใช้ทดสอบใน fork นี้ | [Google Drive](https://drive.google.com/drive/folders/1PP_hzTe_zri7i2YmqNKfhtMgavjXLxiG?usp=sharing) |
 
 ## รัน
 
