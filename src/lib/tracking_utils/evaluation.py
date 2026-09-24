@@ -4,6 +4,10 @@ import copy
 import motmetrics as mm
 mm.lap.default_solver = 'lap'
 
+# motmetrics 1.4.0 ยังเรียก np.asfarray ซึ่งถูกลบไปใน NumPy 2.0
+if not hasattr(np, 'asfarray'):
+    np.asfarray = lambda a, dtype=np.float64: np.asarray(a, dtype=dtype)
+
 from lib.tracking_utils.io import read_results, unzip_objs
 
 
@@ -114,5 +118,6 @@ class Evaluator(object):
     @staticmethod
     def save_summary(summary, filename):
         import pandas as pd
-        writer = pd.ExcelWriter(filename)
-        summary.to_excel(writer)
+        # pandas >= 2 ไม่เขียนไฟล์ถ้าไม่ close writer
+        with pd.ExcelWriter(filename) as writer:
+            summary.to_excel(writer)

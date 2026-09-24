@@ -4,7 +4,7 @@ setup_visdrone_eval.py
 เตรียม VisDrone2019-MOT-test-dev (ที่โหลดจาก GitHub ทางการ) ให้ใช้กับ track_AMOT.py ได้
 
 สิ่งที่สคริปต์ทำ:
-  1. สร้าง <data_dir>/VisDrone2019/test_dev/sequences เป็น symlink ไปยัง <src>/sequences
+  1. สร้าง <data_dir>/VisDrone2019/test_dev/sequences/<seq> เป็น symlink ไปยัง <src>/sequences/<seq>
      (ไม่ copy ภาพ ประหยัดพื้นที่)
   2. กรอง GT จาก <src>/annotations ให้เหลือเฉพาะ 5 คลาสที่ track_AMOT.py เขียนผลออกมา
      (pedestrian, car, van, truck, bus) และตัด ignored region / กล่องที่ flag=0 ทิ้ง
@@ -87,15 +87,18 @@ def main():
     os.makedirs(dst_ann_dir, exist_ok=True)
 
     # ----- 1. symlink ภาพ -----
+    # sequences/ ต้องเป็นโฟลเดอร์จริง แล้ว symlink ทีละ seq ข้างใน
+    # เพราะ track_AMOT.py และ Evaluator ใช้ sequences/../ หา results/ และ annotations_eval/
+    # ถ้า sequences/ ทั้งก้อนเป็น symlink, ".." จะชี้ไปที่ parent ของปลายทางแทน
     if osp.islink(dst_seq_dir):
-        if osp.realpath(dst_seq_dir) != osp.realpath(src_seq_dir):
-            os.remove(dst_seq_dir)
-            os.symlink(src_seq_dir, dst_seq_dir)
-    elif osp.exists(dst_seq_dir):
-        print('[Info] {} มีอยู่แล้ว (ไม่ใช่ symlink) — ใช้ของเดิม'.format(dst_seq_dir))
-    else:
-        os.symlink(src_seq_dir, dst_seq_dir)
-    print('sequences -> {}'.format(osp.realpath(dst_seq_dir)))
+        os.remove(dst_seq_dir)
+    os.makedirs(dst_seq_dir, exist_ok=True)
+    for seq in SEQS:
+        src_img_dir = osp.join(src_seq_dir, seq)
+        dst_img_dir = osp.join(dst_seq_dir, seq)
+        if osp.isdir(src_img_dir) and not osp.lexists(dst_img_dir):
+            os.symlink(src_img_dir, dst_img_dir)
+    print('sequences/<seq> -> {}/<seq>'.format(src_seq_dir))
 
     # ----- 2 & 3. กรอง GT และตรวจความครบถ้วน -----
     n_ok = 0
