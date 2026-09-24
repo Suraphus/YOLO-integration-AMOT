@@ -10,7 +10,9 @@ from lib.tracking_utils.io import read_results, unzip_objs
 class Evaluator(object):
 
     def __init__(self, data_root, seq_name, data_type):
-        self.data_root = '/media/jianbo/ioe/UAVdata/VisDrone2019/test-dev/annotations_car'
+        # data_root = <data_dir>/VisDrone2019/test_dev/sequences
+        # GT ที่กรองแล้ว (จาก setup_visdrone_eval.py) อยู่ข้างๆ ใน annotations_eval/
+        self.data_root = os.path.join(data_root, '..', 'annotations_eval')
         self.seq_name = seq_name
         self.data_type = data_type
 
@@ -21,6 +23,10 @@ class Evaluator(object):
         assert self.data_type == 'mot'
 
         gt_filename = os.path.join(self.data_root, self.seq_name+'.txt')
+        # read_results คืน dict ว่างเงียบๆ ถ้าไม่เจอไฟล์ ทำให้ MOTA ผิดโดยไม่มี error
+        if not os.path.isfile(gt_filename):
+            raise FileNotFoundError(
+                'ไม่พบ GT: {} — รัน setup_visdrone_eval.py ก่อน'.format(os.path.abspath(gt_filename)))
         self.gt_frame_dict = read_results(gt_filename, self.data_type, is_gt=True)
         self.gt_ignore_frame_dict = read_results(gt_filename, self.data_type, is_ignore=True)
 
