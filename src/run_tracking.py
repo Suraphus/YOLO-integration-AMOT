@@ -1,139 +1,212 @@
-#!/usr/bin/env python3
 """
-run_tracking.py — รัน AMOT บนวิดีโอของตัวเอง (สำหรับเครื่อง local ไม่ใช่ Colab/Kaggle)
+run_tracking.py
+
+รัน AMOT (baseline หรือต่อ YOLO) กับวิดีโอไฟล์เดียวโดยตรง (.mov/.mp4)
+พร้อมบันทึกผลลัพธ์เป็นวิดีโอ, เฟรมภาพ, และไฟล์ MOT format (.txt) สำหรับวิเคราะห์ต่อ
 
 วิธีใช้:
-    cd ~/amot_workspace/AMOT/src
-    python run_tracking.py --video /path/to/video.mp4 --model /path/to/visdrone.pth
 
-ทุก path เป็น argument ที่ต้องระบุเอง ไม่ต้องแก้ hardcode ในไฟล์เหมือนตอนอยู่บน Colab/Kaggle
+  # Baseline (DLA-only)
+  python run_tracking.py \
+      --video ~/amot_workspace/AMOT/videos/clip.mp4 \
+      --model ~/amot_workspace/AMOT/models/visdrone.pth \
+      --output ~/amot_workspace/AMOT/output_videos/baseline.mp4 \
+      --frames-dir ~/amot_workspace/AMOT/output_videos/baseline_frames
+
+  # YOLO integration
+  python run_tracking.py \
+      --video ~/amot_workspace/AMOT/videos/clip.mp4 \
+      --model ~/amot_workspace/AMOT/models/visdrone.pth \
+      --output ~/amot_workspace/AMOT/output_videos/yolo.mp4 \
+      --frames-dir ~/amot_workspace/AMOT/output_videos/yolo_frames \
+      --use_yolo --yolo-model ~/amot_workspace/AMOT/models/yolo_best.pt \
+      --yolo-conf 0.1
+
+ผลลัพธ์:
+  <output>.mp4           วิดีโอดิบ (mp4v)
+  <output>_web.mp4       วิดีโอ H.264 web-optimized
+  <output>_tracks.txt    MOT format สำหรับ compare_tracking_results.py / diagnose_fragmentation.py
+  <frames-dir>/*.jpg     เฟรมภาพรายเฟรม (ถ้าระบุ --frames-dir)
 """
-import sys
-import os
+
 import argparse
+import os
+import os.path as osp
+import subprocess
+import sys
+
+import cv2
+import torch
 
 # แก้ปัญหา ModuleNotFoundError: No module named 'dcn_v2' / '_ext'
-# (เจอปัญหานี้ตอนอยู่บน Colab/Kaggle เพราะ setup.py develop บางเวอร์ชันไม่ลงทะเบียน path ให้ครบ)
+# (setup.py develop บางเวอร์ชันไม่ลงทะเบียน path ให้ครบ — ยัด path ของ DCNv2/ เข้า sys.path ตรงๆ)
 _here = os.path.dirname(os.path.abspath(__file__))
 _dcnv2_path = os.path.abspath(os.path.join(_here, '..', 'DCNv2'))
 sys.path.insert(0, _dcnv2_path)
 
 import _init_paths
-import cv2
-import torch
-from collections import defaultdict
-from lib.opts import opts
 from lib.tracker.multitracker import MCJDETracker
 from lib.tracking_utils import visualization as vis
+from lib.tracking_utils.log import logger
 from lib.tracking_utils.timer import Timer
+from lib.tracking_utils.utils import mkdir_if_missing
 import lib.datasets.dataset.jde as datasets
-from lib.tracking_utils.io import write_results
+from lib.opts import opts
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--video', required=True, help='path ของวิดีโอที่จะ track')
-    parser.add_argument('--model', required=True, help='path ของ visdrone.pth (หรือ checkpoint อื่น)')
-    parser.add_argument('--output', default='output.mp4', help='path วิดีโอผลลัพธ์')
-    parser.add_argument('--frames-dir', default='./demo_output_frames', help='โฟลเดอร์เก็บเฟรมรายภาพ')
-    parser.add_argument('--conf-thres', type=float, default=0.4, help='ลดจาก default 0.4 ถ้าเจอ missing detection')
-    parser.add_argument('--track-buffer', type=int, default=30, help='เพิ่มถ้าเจอ ID switch บ่อยตอนวัตถุถูกบัง')
-    parser.add_argument('--use_yolo', action='store_true')
-    parser.add_argument('--yolo-model', type=str, default='') 
-    parser.add_argument('--yolo-conf', type=float, default=0.1)
-    args = parser.parse_args()
+def parse_args():
+    parser = argparse.ArgumentParser(description='รัน AMOT tracking บนวิดีโอไฟล์เดียว')
+    parser.add_argument('--video', type=str, required=True,
+                        help='path วิดีโอ input (.mp4/.mov)')
+    parser.add_argument('--model', type=str, required=True,
+                        help='path ของ DLA-34 weight (visdrone.pth)')
+    parser.add_argument('--output', type=str, required=True,
+                        help='path วิดีโอ output (.mp4)')
+    parser.add_argument('--frames-dir', type=str, default='',
+                        help='โฟลเดอร์สำหรับบันทึกเฟรมภาพรายเฟรม (ไม่ระบุ = ไม่บันทึก)')
+    parser.add_argument('--conf-thres', type=float, default=0.4,
+                        help='threshold ของ AMOT cascade (default 0.4)')
 
-    if not os.path.isfile(args.video):
-        raise FileNotFoundError(f"ไม่พบวิดีโอที่: {args.video}")
-    if not os.path.isfile(args.model):
-        raise FileNotFoundError(f"ไม่พบ checkpoint ที่: {args.model}")
+    # YOLO integration
+    parser.add_argument('--use_yolo', action='store_true',
+                        help='เปิดใช้ YOLO เป็น detector แทน mot_decode เดิม')
+    parser.add_argument('--yolo-model', type=str, default='',
+                        help='path ของ YOLO weight (best.pt)')
+    parser.add_argument('--yolo-conf', type=float, default=0.1,
+                        help='confidence threshold ของ YOLO (default 0.1)')
 
-    # ลบเฟรมเก่าทิ้งก่อน กันปัญหาเฟรมจากคลิปก่อนหน้าตกค้างปนกัน
-    import shutil
-    if os.path.isdir(args.frames_dir):
-        shutil.rmtree(args.frames_dir)
-    os.makedirs(args.frames_dir, exist_ok=True)
+    return parser.parse_args()
 
-    opt = opts().init([])
+
+def build_opt(args):
+    """สร้าง opt object ของ AMOT แล้วเติมค่าจาก CLI args"""
+    sys.argv = [sys.argv[0]]  # ป้องกัน opts().init() ไป parse args ของเราเอง
+    opt = opts().init()
+
+    opt.device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    opt.load_model = args.model
+    opt.conf_thres = args.conf_thres
+
+    # ส่งค่า YOLO เข้า opt ให้ multitracker.py อ่านได้
     opt.use_yolo = args.use_yolo
     opt.yolo_model = args.yolo_model
     opt.yolo_conf = args.yolo_conf
-    opt.conf_thres = args.conf_thres
-    opt.track_buffer = args.track_buffer
-    opt.load_model = args.model
-    opt.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    if opt.device.type == 'cpu':
-        print("⚠️  ไม่พบ GPU — จะรันบน CPU (ช้ามาก และผลลัพธ์อาจไม่แม่นยำเท่า GPU ตามที่เคยทดสอบไว้)")
+
+    return opt
+
+
+def run(opt, args):
+    mkdir_if_missing(osp.dirname(osp.abspath(args.output)))
+    if args.frames_dir:
+        mkdir_if_missing(args.frames_dir)
 
     dataloader = datasets.LoadVideo(args.video, opt.img_size)
-    frame_rate = dataloader.frame_rate
-    print(f"วิดีโอ: {args.video} | frame_rate ต้นฉบับ: {frame_rate:.2f} fps")
+    frame_rate = dataloader.frame_rate if dataloader.frame_rate > 0 else 30
+
+    logger.info('วิดีโอ: {} | frame_rate ต้นฉบับ: {:.2f} fps'.format(args.video, frame_rate))
+    if opt.use_yolo:
+        logger.info('โหมด: YOLO integration (conf={}) | weight: {}'.format(
+            opt.yolo_conf, opt.yolo_model))
+    else:
+        logger.info('โหมด: ใช้ mot_decode เดิมของ AMOT (baseline, ไม่ใช้ YOLO)')
 
     tracker = MCJDETracker(opt, frame_rate)
     timer = Timer()
 
-    video_writer = None  # สร้างตอนรู้ขนาดเฟรมแรก เขียนวิดีโอไปพร้อมกันเลย ไม่ต้องรอจบก่อน
+    out_w, out_h = dataloader.w, dataloader.h
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(args.output, fourcc, frame_rate, (out_w, out_h))
+
+    results = []   # เก็บผลลัพธ์ MOT format
     frame_id = 0
-    results_dict = {}
 
     for path, img, img0 in dataloader:
+        if frame_id % 30 == 0 and frame_id != 0:
+            logger.info('Processing frame {} ({:.2f} fps)'.format(
+                frame_id, 1.0 / max(1e-5, timer.average_time)))
         frame_id += 1
+
         blob = torch.from_numpy(img).unsqueeze(0).to(opt.device)
+
         timer.tic()
         online_targets_dict = tracker.update_tracking(blob, img0)
         timer.toc()
 
-        online_tlwhs_dict = defaultdict(list)
-        online_ids_dict = defaultdict(list)
-        online_scores_dict = defaultdict(list)
-        for cls_id in range(opt.num_classes):
-            for t in online_targets_dict[cls_id]:
-                if t.curr_tlwh[2] * t.curr_tlwh[3] > opt.min_box_area:
-                    online_tlwhs_dict[cls_id].append(t.curr_tlwh)
-                    online_ids_dict[cls_id].append(t.track_id)
-                    online_scores_dict[cls_id].append(t.score)
-
+        online_tlwhs_dict, online_ids_dict, online_scores_dict = {}, {}, {}
         frame_results = []
+
         for cls_id in range(opt.num_classes):
-            for tid, tlwh in zip(online_ids_dict[cls_id], online_tlwhs_dict[cls_id]):
-                frame_results.append((tlwh, cls_id * 10000 + tid))
-        results_dict[frame_id] = frame_results
-        
+            online_targets = online_targets_dict[cls_id]
+            tlwhs, ids, scores = [], [], []
+            for track in online_targets:
+                tlwh = track.curr_tlwh
+                tid = track.track_id
+                if tlwh[2] * tlwh[3] > opt.min_box_area:
+                    tlwhs.append(tlwh)
+                    ids.append(tid)
+                    scores.append(track.score)
+                    # unique id ข้ามคลาส: cls_id*10000 + tid กัน ID ชนกัน
+                    frame_results.append((tlwh, cls_id * 10000 + tid, track.score))
+            online_tlwhs_dict[cls_id] = tlwhs
+            online_ids_dict[cls_id] = ids
+            online_scores_dict[cls_id] = scores
+
+        # เก็บเป็น MOT format: frame, id, x, y, w, h, score, -1, -1, -1
+        for tlwh, uid, score in frame_results:
+            x, y, w, h = tlwh
+            results.append('{},{},{:.2f},{:.2f},{:.2f},{:.2f},{:.4f},-1,-1,-1\n'.format(
+                frame_id, uid, x, y, w, h, score))
+
+        # เก็บสำเนาภาพดิบไว้ก่อนวาดกล่อง (กันเผื่อ plot_tracks วาดทับ img0 ตรงๆ แทนที่จะคืนภาพใหม่)
+        # ใช้สำหรับ crop รูป object แบบไม่ติดกรอบใน dashboard ทีหลัง
+        raw_frame = img0.copy()
+
         online_im = vis.plot_tracks(
-            image=img0, tlwhs_dict=online_tlwhs_dict,
-            obj_ids_dict=online_ids_dict, num_classes=opt.num_classes,
-            scores=online_scores_dict, frame_id=frame_id,
-            fps=1.0 / max(1e-5, timer.average_time)
+            image=img0,
+            tlwhs_dict=online_tlwhs_dict,
+            obj_ids_dict=online_ids_dict,
+            num_classes=opt.num_classes,
+            scores=online_scores_dict,
+            frame_id=frame_id,
+            fps=1.0 / max(1e-5, timer.average_time),
         )
 
-        cv2.imwrite(os.path.join(args.frames_dir, f'{frame_id:05d}.jpg'), online_im)
-
-        if video_writer is None:
-            h, w = online_im.shape[:2]
-            video_writer = cv2.VideoWriter(
-                args.output, cv2.VideoWriter_fourcc(*'mp4v'), frame_rate, (w, h)
-            )
         video_writer.write(online_im)
 
-        if frame_id % 30 == 0:
-            print(f'ประมวลผลแล้ว {frame_id} เฟรม | {1.0 / max(1e-5, timer.average_time):.1f} FPS')
+        if args.frames_dir:
+            cv2.imwrite(osp.join(args.frames_dir, '{:05d}.jpg'.format(frame_id)), online_im)
+            cv2.imwrite(osp.join(args.frames_dir, '{:05d}_raw.jpg'.format(frame_id)), raw_frame)
 
-    if video_writer is not None:
-        video_writer.release()
+    video_writer.release()
 
-        txt_output = args.output.replace('.mp4', '_tracks.txt')
-        write_results(txt_output, results_dict, 'mot')
+    # เขียนไฟล์ MOT format
+    tracks_path = osp.splitext(args.output)[0] + '_tracks.txt'
+    with open(tracks_path, 'w') as f:
+        f.writelines(results)
 
-    print(f"\nเสร็จแล้ว! ประมวลผลไป {frame_id} เฟรม")
-    print(f"วิดีโอผลลัพธ์ (mp4v codec): {args.output}")
-    print(f"เฟรมรายภาพ: {args.frames_dir}")
+    logger.info('เสร็จแล้ว')
+    logger.info('  วิดีโอดิบ    : {}'.format(args.output))
+    logger.info('  MOT tracks  : {}'.format(tracks_path))
+    if args.frames_dir:
+        logger.info('  เฟรมภาพ     : {}'.format(args.frames_dir))
+    logger.info('  Total frames: {}, avg FPS: {:.2f}'.format(
+        frame_id, 1.0 / max(1e-5, timer.average_time)))
 
-    # แปลงเป็น H.264 อัตโนมัติให้เล่นได้ทุกที่ (เหมือนที่ทำตอนอยู่บน Colab/Kaggle)
-    web_output = args.output.replace('.mp4', '_web.mp4')
-    os.system(f'ffmpeg -y -i "{args.output}" -vcodec libx264 -pix_fmt yuv420p "{web_output}"')
-    print(f"วิดีโอเวอร์ชัน web-compatible (H.264): {web_output}")
+    # แปลงเป็น H.264 web-optimized
+    web_output_path = osp.splitext(args.output)[0] + '_web.mp4'
+    try:
+        subprocess.run(
+            ['ffmpeg', '-y', '-i', args.output, '-c:v', 'libx264', '-crf', '23',
+             '-pix_fmt', 'yuv420p', web_output_path],
+            check=True, capture_output=True
+        )
+        logger.info('  เวอร์ชัน web : {}'.format(web_output_path))
+    except Exception as e:
+        logger.warning('ffmpeg re-encode ไม่สำเร็จ (ไม่กระทบไฟล์ดิบ): {}'.format(e))
 
 
 if __name__ == '__main__':
-    main()
-
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+    args = parse_args()
+    opt = build_opt(args)
+    run(opt, args)
