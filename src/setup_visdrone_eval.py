@@ -1,39 +1,33 @@
 """
 setup_visdrone_eval.py
 
-เตรียม VisDrone2019-MOT-test-dev (ที่โหลดจาก GitHub ทางการ) ให้ใช้กับ track_AMOT.py ได้
+เตรียม VisDrone2019-MOT (test-dev หรือ val ที่โหลดจาก GitHub ทางการ) ให้ใช้กับ track_AMOT.py ได้
 
-สิ่งที่สคริปต์ทำ:
-  1. สร้าง <data_dir>/VisDrone2019/test_dev/sequences/<seq> เป็น symlink ไปยัง <src>/sequences/<seq>
-     (ไม่ copy ภาพ ประหยัดพื้นที่)
+สิ่งที่สคริปต์ทำ (<split> มาจาก --split เช่น test_dev หรือ val):
+  1. สร้าง <data_dir>/VisDrone2019/<split>/sequences/<seq> เป็น symlink ไปยัง <src>/sequences/<seq>
+     (ไม่ copy ภาพ ประหยัดพื้นที่) — track_AMOT.py อ่านรายชื่อ sequence จากโฟลเดอร์นี้
   2. กรอง GT จาก <src>/annotations ให้เหลือเฉพาะ 5 คลาสที่ track_AMOT.py เขียนผลออกมา
      (pedestrian, car, van, truck, bus) และตัด ignored region / กล่องที่ flag=0 ทิ้ง
-     แล้วเขียนไปที่ <data_dir>/VisDrone2019/test_dev/annotations_eval/<seq>.txt
+     แล้วเขียนไปที่ <data_dir>/VisDrone2019/<split>/annotations_eval/<seq>.txt
      ซึ่งเป็น path ที่ Evaluator (lib/tracking_utils/evaluation.py) อ่าน
-  3. ตรวจว่าครบทั้ง 17 sequence ที่ track_AMOT.py ใช้ และจำนวนเฟรมภาพตรงกับ GT
+  3. ตรวจว่าทุก sequence ใน <src>/annotations มีภาพครบ และจำนวน sequence ตรงกับที่ควรเป็นของ split นั้น
 
 วิธีใช้ (บน PC):
   python setup_visdrone_eval.py \
-      --src ~/Downloads/VisDrone2019-MOT-test-dev \
-      --data_dir ~/UAVdata
+      --src ~/datasets/VisDrone2019-MOT-val \
+      --data_dir ~/UAVdata --split val
 
-  จากนั้นรัน track_AMOT.py ด้วย --data_dir เดียวกัน
+  จากนั้นรัน track_AMOT.py ด้วย --data_dir และ --split เดียวกัน
 """
 
 import argparse
+import glob
 import os
 import os.path as osp
 import sys
 
-# 17 sequence เดียวกับที่ hardcode ไว้ใน track_AMOT.py
-SEQS = [
-    'uav0000009_03358_v', 'uav0000073_00600_v', 'uav0000073_04464_v',
-    'uav0000077_00720_v', 'uav0000088_00290_v', 'uav0000119_02301_v',
-    'uav0000120_04775_v', 'uav0000161_00000_v', 'uav0000188_00000_v',
-    'uav0000201_00000_v', 'uav0000249_00001_v', 'uav0000249_02688_v',
-    'uav0000297_00000_v', 'uav0000297_02761_v', 'uav0000306_00230_v',
-    'uav0000355_00001_v', 'uav0000370_00001_v',
-]
+# จำนวน sequence ของแต่ละ split ใน VisDrone2019-MOT (ใช้เตือนเมื่อแตกไฟล์มาไม่ครบ)
+EXPECTED_SEQ_COUNT = {'test_dev': 17, 'val': 7}
 
 # category ใน annotation ทางการของ VisDrone:
 #   0 ignored, 1 pedestrian, 2 people, 3 bicycle, 4 car, 5 van, 6 truck,
@@ -66,9 +60,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--src', required=True,
-                        help='โฟลเดอร์ VisDrone2019-MOT-test-dev ที่แตกไฟล์แล้ว (มี sequences/ และ annotations/)')
+                        help='โฟลเดอร์ VisDrone2019-MOT-<split> ที่แตกไฟล์แล้ว (มี sequences/ และ annotations/)')
     parser.add_argument('--data_dir', required=True,
                         help='ค่าเดียวกับที่จะส่งให้ track_AMOT.py --data_dir')
+    parser.add_argument('--split', default='test_dev',
+                        help='ชื่อโฟลเดอร์ปลายทางใต้ <data_dir>/VisDrone2019/ (test_dev หรือ val) '
+                             'ต้องตรงกับ track_AMOT.py --split')
     args = parser.parse_args()
 
     src = osp.abspath(osp.expanduser(args.src))
@@ -80,10 +77,18 @@ def main():
         if not osp.isdir(d):
             sys.exit('[Error] ไม่พบ {} — ตรวจว่า --src ชี้ไปที่โฟลเดอร์ที่มี sequences/ และ annotations/'.format(d))
 
-    test_dev = osp.join(data_dir, 'VisDrone2019', 'test_dev')
-    dst_seq_dir = osp.join(test_dev, 'sequences')
-    dst_ann_dir = osp.join(test_dev, 'annotations_eval')
-    os.makedirs(test_dev, exist_ok=True)
+    seqs = sorted(osp.splitext(osp.basename(p))[0] for p in glob.glob(osp.join(src_ann_dir, '*.txt')))
+    if not seqs:
+        sys.exit('[Error] ไม่พบไฟล์ GT ใน {}'.format(src_ann_dir))
+    expected = EXPECTED_SEQ_COUNT.get(args.split)
+    if expected is not None and len(seqs) != expected:
+        print('[Warning] พบ {} sequence แต่ {} ควรมี {} — ตรวจว่าแตกไฟล์ครบและ --src ตรงกับ --split'
+              .format(len(seqs), args.split, expected))
+
+    split_dir = osp.join(data_dir, 'VisDrone2019', args.split)
+    dst_seq_dir = osp.join(split_dir, 'sequences')
+    dst_ann_dir = osp.join(split_dir, 'annotations_eval')
+    os.makedirs(split_dir, exist_ok=True)
     os.makedirs(dst_ann_dir, exist_ok=True)
 
     # ----- 1. symlink ภาพ -----
@@ -93,7 +98,7 @@ def main():
     if osp.islink(dst_seq_dir):
         os.remove(dst_seq_dir)
     os.makedirs(dst_seq_dir, exist_ok=True)
-    for seq in SEQS:
+    for seq in seqs:
         src_img_dir = osp.join(src_seq_dir, seq)
         dst_img_dir = osp.join(dst_seq_dir, seq)
         if osp.isdir(src_img_dir) and not osp.lexists(dst_img_dir):
@@ -103,7 +108,7 @@ def main():
     # ----- 2 & 3. กรอง GT และตรวจความครบถ้วน -----
     n_ok = 0
     print('\n{:<22} {:>7} {:>9} {:>9}  {}'.format('sequence', 'images', 'gt_kept', 'gt_drop', 'status'))
-    for seq in SEQS:
+    for seq in seqs:
         img_dir = osp.join(dst_seq_dir, seq)
         src_txt = osp.join(src_ann_dir, seq + '.txt')
 
@@ -125,11 +130,12 @@ def main():
             n_ok += 1
         print('{:<22} {:>7} {:>9} {:>9}  {}'.format(seq, n_img, kept, dropped, status))
 
-    print('\nพร้อมใช้ {}/{} sequence'.format(n_ok, len(SEQS)))
+    print('\nพร้อมใช้ {}/{} sequence'.format(n_ok, len(seqs)))
     print('GT ที่กรองแล้วอยู่ที่: {}'.format(dst_ann_dir))
-    if n_ok == len(SEQS):
+    if n_ok == len(seqs):
         print('\nรันต่อได้เลย:')
-        print('  python track_AMOT.py --load_model /path/to/visdrone.pth --data_dir {}'.format(data_dir))
+        print('  python track_AMOT.py --load_model /path/to/visdrone.pth --data_dir {} --split {} '
+              '--exp_name <ชื่อรอบ>'.format(data_dir, args.split))
     else:
         sys.exit(1)
 

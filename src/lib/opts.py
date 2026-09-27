@@ -207,6 +207,20 @@ class opts(object):
         self.parser.add_argument('--data_dir',
                                  type=str,
                                  default='/media/jianbo/ioe/UAVdata')
+        # benchmark (track_AMOT.py): เลือก split และชื่อโฟลเดอร์ผล
+        self.parser.add_argument('--split',
+                                 type=str,
+                                 default='test_dev',
+                                 help='โฟลเดอร์ย่อยใต้ <data_dir>/VisDrone2019/ ที่ setup_visdrone_eval.py เตรียมไว้ '
+                                      'เช่น test_dev หรือ val')
+        self.parser.add_argument('--exp_name',
+                                 type=str,
+                                 default='save_name',
+                                 help='ผลจะอยู่ที่ <data_dir>/VisDrone2019/<split>/results/<exp_name> '
+                                      '(ชื่อซ้ำ = เขียนทับผลเดิม)')
+        self.parser.add_argument('--save_images',
+                                 action='store_true',
+                                 help='บันทึกภาพผลทุกเฟรมไว้ที่ outputs/<exp_name> (~2.4 GB ต่อรอบบน test_dev)')
 
         # loss
         self.parser.add_argument('--mse_loss',  # default: false

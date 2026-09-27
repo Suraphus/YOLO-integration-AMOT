@@ -41,8 +41,12 @@ cd DCNv2 && python3 setup.py build develop && cd ..   # compile custom DCN op
 **Benchmark เดิม (VisDrone test set, เทียบ GT):**
 ```bash
 cd src
-python track_AMOT.py --load_model /path/to/visdrone.pth --data_dir /path/to/UAVdata
+python setup_visdrone_eval.py --src /path/to/VisDrone2019-MOT-test-dev --data_dir /path/to/UAVdata
+python track_AMOT.py --load_model /path/to/visdrone.pth --data_dir /path/to/UAVdata --exp_name baseline
 ```
+- `--split val` (ใส่ทั้งสองคำสั่ง) = รันบน VisDrone2019-MOT-val แทน test-dev — ใช้จูน threshold
+- ผลอยู่ที่ `<data_dir>/VisDrone2019/<split>/results/<exp_name>` (ชื่อซ้ำ = เขียนทับ) และจะไม่บันทึกภาพรายเฟรมถ้าไม่ใส่ `--save_images`
+- ตัวเลขที่ track_AMOT.py พิมพ์ใช้ evaluator เดิม (ไม่แยกคลาส ไม่ตัด ignored region) ให้วัดใหม่ด้วย `reeval_visdrone.py`
 
 **รันวิดีโอของตัวเอง (local, ไม่ต้องมี GT):**
 ```bash
@@ -60,6 +64,7 @@ python run_tracking.py --video clip.mp4 --model visdrone.pth --output out.mp4
 ## เครื่องมือเสริม
 
 รายละเอียดวิธีใช้ดูได้จาก docstring ในแต่ละไฟล์ (`--help` ใช้ได้ทุกตัว):
+- `reeval_visdrone.py` — วัดผลใหม่จาก results/ แบบแยกคลาส + ตัด ignored region (ใกล้ toolkit ทางการ) และแสดงว่าแต่ละการแก้เปลี่ยนตัวเลขเท่าไร
 - `run_conf_ablation.sh` + `analyze_conf_ablation.py` — ไล่หาค่า `--yolo-conf` ที่สมดุลระหว่าง recall กับ fragmentation
 - `compare_tracking_results.py` — เทียบผล baseline (DLA) กับ YOLO จากไฟล์ track output อย่างเดียว
 - `diagnose_fragmentation.py` — วิเคราะห์ว่า track ID ใหม่คือวัตถุใหม่จริง หรือ track เดิมที่ขาดแล้วถูกนับ ID ใหม่

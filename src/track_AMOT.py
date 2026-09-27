@@ -158,33 +158,20 @@ if __name__ == '__main__':
     os.environ['CUDA_VISIBLE_DEVICES'] = '0'
     opt = opts().init()
 
-    if opt.test_visdrone:
-        seqs_str = '''uav0000009_03358_v
-                      uav0000073_00600_v
-                      uav0000073_04464_v
-                      uav0000077_00720_v
-                      uav0000088_00290_v
-                      uav0000119_02301_v
-                      uav0000120_04775_v
-                      uav0000161_00000_v
-                      uav0000188_00000_v
-                      uav0000201_00000_v
-                      uav0000249_00001_v
-                      uav0000249_02688_v
-                      uav0000297_00000_v
-                      uav0000297_02761_v
-                      uav0000306_00230_v
-                      uav0000355_00001_v
-                      uav0000370_00001_v
-                      '''
-    data_root = os.path.join(opt.data_dir, 'VisDrone2019/test_dev/sequences')
-    seqs = [seq.strip() for seq in seqs_str.split()]
-    print(opt.save_dir_result)
+    # รายชื่อ sequence อ่านจากโฟลเดอร์ที่ setup_visdrone_eval.py --split <split> เตรียมไว้
+    # (test_dev มี 17, val มี 7) แทนการ hardcode ไว้เฉพาะ test_dev
+    data_root = os.path.join(opt.data_dir, 'VisDrone2019', opt.split, 'sequences')
+    if not osp.isdir(data_root):
+        raise FileNotFoundError(
+            'ไม่พบ {} — รัน setup_visdrone_eval.py --split {} ก่อน'.format(data_root, opt.split))
+    seqs = sorted(d for d in os.listdir(data_root) if osp.isdir(osp.join(data_root, d)))
+    print('split: {} | {} sequence | ผลจะอยู่ที่ {}'.format(
+        opt.split, len(seqs), osp.join(data_root, '..', 'results', opt.exp_name)))
     opt.device = 'cuda:0'
     main(opt,
          data_root=data_root,
          seqs=seqs,
-         exp_name= 'save_name',
+         exp_name=opt.exp_name,
          show_image=False,
-         save_images=True,
+         save_images=opt.save_images,
          save_videos=False)
