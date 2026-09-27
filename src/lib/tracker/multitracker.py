@@ -3,7 +3,7 @@ from collections import deque
 import numpy as np
 import torch
 import torch.nn.functional as F
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from lib.models import *
 from lib.models.decode import mot_decode
@@ -280,6 +280,26 @@ def orig2map(boxes_xyxy, h_out, w_out, h_orig, w_orig):
     return boxes
 
 
+# ตัวนับใน MCJDETracker.assoc_stats (รวมทุกคลาสทุกเฟรม) — ใช้ดูว่า track ได้คู่ในขั้นไหน
+# และ MTC ถูกเรียก / สำเร็จ / ตกเงื่อนไขไหนกี่ครั้ง แค่นับ ไม่มีผลต่อการ track
+ASSOC_STAT_KEYS = [
+    'frames',
+    'stage1_match',         # high det จับกับ track ด้วย AMC + IoU + ReID
+    'stage2_match',         # high det ที่เหลือ จับด้วย IoU อย่างเดียว
+    'stage3_low_match',     # low det จับด้วย IoU >= 0.8
+    'mtc_candidates',       # track สถานะ Tracked ที่ยังไม่มีคู่หลัง 3 ขั้น = ส่งเข้า MTC
+    'mtc_fail_gap',         # ไม่ได้ถูก update เมื่อเฟรมที่แล้ว
+    'mtc_fail_short',       # มีประวัติไม่ถึง 10 ครั้ง
+    'mtc_fail_not_consec',  # 3 ครั้งล่าสุดในประวัติไม่ต่อเนื่องกัน
+    'mtc_removed_border',   # อยู่ชิดขอบภาพ → ลบ track ทิ้ง
+    'mtc_fail_far',         # ตำแหน่งจาก ReID ห่างจาก Kalman เกิน 3 px
+    'mtc_fail_overlap',     # ทับ detection (ไม่ควรเกิด เพราะโค้ดเทียบ IoU กับ 2)
+    'mtc_reactivated',      # MTC กู้ track สำเร็จ
+    'unconfirmed_match',    # track ใหม่ได้รับการยืนยันในเฟรมถัดไป
+    'new_track',            # เปิด track ใหม่
+]
+
+
 class MCJDETracker(object):
     def __init__(self, opt, frame_rate=30):
         self.opt = opt
@@ -327,6 +347,8 @@ class MCJDETracker(object):
 
         self.gmc = GMC(method='sparseOptFlow', verbose=[None, False])
 
+        self.assoc_stats = Counter()
+
     def _check_yolo_class_mapping(self):
         """
         ตรวจสอบว่า class index ของ YOLO (self.detector.names) ตรงกับ id2cls ของ AMOT/VisDrone หรือไม่
@@ -373,6 +395,7 @@ class MCJDETracker(object):
         self.removed_tracks_dict = defaultdict(list)
         self.frame_id = 0
         self.kalman_filter = KalmanFilter()
+        self.assoc_stats = Counter()
 
     def post_process(self, dets, meta):
         dets = dets.detach().cpu().numpy()
@@ -405,6 +428,7 @@ class MCJDETracker(object):
 
     def update_tracking(self, im_blob, img_0):
         self.frame_id += 1
+        self.assoc_stats['frames'] += 1
 
         if self.frame_id == 1:
             MCTrack.init_count(self.opt.num_classes)
@@ -530,6 +554,7 @@ class MCJDETracker(object):
             dist_iou = matching.fuse_score_three(dist_iou, dists, cls_detects)
 
             matches, u_track, u_detection = matching.linear_assignment(dist_iou, thresh=0.6)
+            self.assoc_stats['stage1_match'] += len(matches)
 
             for i_tracked, i_det in matches:
                 track = track_pool_dict[cls_id][i_tracked]
@@ -548,6 +573,7 @@ class MCJDETracker(object):
             dist_iou = matching.iou_distance(r_tracked_tracks, cls_detects)
 
             matches, u_track, u_detection = matching.linear_assignment(dist_iou, thresh=0.8)
+            self.assoc_stats['stage2_match'] += len(matches)
 
             for i_tracked, i_det in matches:
                 track = r_tracked_tracks[i_tracked]
@@ -562,6 +588,7 @@ class MCJDETracker(object):
             second_tracked_tracks = [r_tracked_tracks[i] for i in u_track]
             dist_iou = matching.iou_distance(second_tracked_tracks, cls_detects_second)
             matches, u_track, u_detection_second = matching.linear_assignment(dist_iou, thresh=0.2)
+            self.assoc_stats['stage3_low_match'] += len(matches)
 
             for i_tracked, i_det in matches:
                 track = second_tracked_tracks[i_tracked]
@@ -578,13 +605,16 @@ class MCJDETracker(object):
 
                 if track.state == TrackState.Lost:
                     continue
+                self.assoc_stats['mtc_candidates'] += 1
 
                 if self.frame_id - track.end_frame != 1:
+                    self.assoc_stats['mtc_fail_gap'] += 1
                     track.mark_lost()
                     lost_tracks_dict[cls_id].append(track)
                     continue
 
                 if len(track.tlwh_deque) < 10:
+                    self.assoc_stats['mtc_fail_short'] += 1
                     track.mark_lost()
                     lost_tracks_dict[cls_id].append(track)
                     continue
@@ -594,6 +624,7 @@ class MCJDETracker(object):
                 frame_id_3, tlwh_3 = track.tlwh_deque[-3]
 
                 if not (frame_id_3 + 1 == frame_id_2 and frame_id_2 + 1 == frame_id_1):
+                    self.assoc_stats['mtc_fail_not_consec'] += 1
                     track.mark_lost()
                     lost_tracks_dict[cls_id].append(track)
                     continue
@@ -606,6 +637,7 @@ class MCJDETracker(object):
                         (x + w) >= (width - margin) or
                         (y + h) >= (height - margin) and len(track.tlwh_deque) > 0
                 ):
+                    self.assoc_stats['mtc_removed_border'] += 1
                     track.mark_removed()
                     removed_tracks_dict[cls_id].append(track)
                     continue
@@ -631,12 +663,15 @@ class MCJDETracker(object):
                         min_dist_2 = 0
 
                     if min_dist_1 <= 2 and min_dist_2 <= 2:
+                        self.assoc_stats['mtc_reactivated'] += 1
                         track.update_retrack(track.tlwh, self.frame_id)
                         activated_tracks_dict[cls_id].append(track)
                     else:
+                        self.assoc_stats['mtc_fail_overlap'] += 1
                         track.mark_lost()
                         lost_tracks_dict[cls_id].append(track)
                 else:
+                    self.assoc_stats['mtc_fail_far'] += 1
                     track.mark_lost()
                     lost_tracks_dict[cls_id].append(track)
 
@@ -645,6 +680,7 @@ class MCJDETracker(object):
                                                         self.past_reg, h_out, w_out, height, width)
             dist_iou = matching.iou_distance(unconfirmed_dict[cls_id], cls_detects) * dist_off
             matches, u_unconfirmed, u_detection = matching.linear_assignment(dist_iou, thresh=0.5)
+            self.assoc_stats['unconfirmed_match'] += len(matches)
 
             for i_tracked, i_det in matches:
                 unconfirmed_dict[cls_id][i_tracked].update(cls_detects[i_det], self.frame_id)
@@ -660,6 +696,7 @@ class MCJDETracker(object):
                     continue
 
                 track.activate(self.kalman_filter, self.frame_id)
+                self.assoc_stats['new_track'] += 1
                 activated_tracks_dict[cls_id].append(track)
 
             for track in self.lost_tracks_dict[cls_id]:

@@ -13,7 +13,7 @@ import numpy as np
 import torch
 
 from collections import defaultdict
-from lib.tracker.multitracker import MCJDETracker
+from lib.tracker.multitracker import MCJDETracker, ASSOC_STAT_KEYS
 from lib.tracking_utils import visualization as vis
 from lib.tracking_utils.log import logger
 from lib.tracking_utils.timer import Timer
@@ -103,7 +103,30 @@ def eval_seq(opt,
             if save_dir is not None:
                 cv2.imwrite(os.path.join(save_dir, '{:05d}.jpg'.format(frame_id)), online_im)
     write_results_dict(result_f_name, results_dict, data_type)
-    return frame_id, timer.average_time, timer.calls
+    return frame_id, timer.average_time, timer.calls, tracker.assoc_stats
+
+def save_assoc_stats(file_name, seq_stats):
+    """
+    บันทึกตัวนับของ tracker ต่อ sequence (+ แถว TOTAL) — track ได้คู่ในขั้นไหน, MTC ถูกเรียก/สำเร็จกี่ครั้ง
+    ความหมายของแต่ละคอลัมน์ดูที่ ASSOC_STAT_KEYS ใน lib/tracker/multitracker.py
+    เป็นไฟล์ .csv เพื่อไม่ให้ reeval_visdrone.py (อ่าน *.txt) เข้าใจผิดว่าเป็นผลของ sequence
+    """
+    total = defaultdict(int)
+    with open(file_name, 'w') as f:
+        f.write(','.join(['sequence'] + ASSOC_STAT_KEYS) + '\n')
+        for seq, stats in seq_stats:
+            f.write(','.join([seq] + [str(stats[k]) for k in ASSOC_STAT_KEYS]) + '\n')
+            for k in ASSOC_STAT_KEYS:
+                total[k] += stats[k]
+        f.write(','.join(['TOTAL'] + [str(total[k]) for k in ASSOC_STAT_KEYS]) + '\n')
+
+    matched = total['stage1_match'] + total['stage2_match'] + total['stage3_low_match']
+    logger.info('MTC: ส่งเข้า {} ครั้ง, กู้สำเร็จ {} ครั้ง ({:.1f}%) | '
+                'ส่งเข้า MTC {:.1f} ครั้งต่อการจับคู่ 100 ครั้ง'.format(
+                    total['mtc_candidates'], total['mtc_reactivated'],
+                    100.0 * total['mtc_reactivated'] / max(total['mtc_candidates'], 1),
+                    100.0 * total['mtc_candidates'] / max(matched, 1)))
+    logger.info('save association stats to {}'.format(file_name))
 
 def main(opt,
          data_root='',
@@ -119,6 +142,7 @@ def main(opt,
     accs = []
     n_frame = 0
     timer_avgs, timer_calls = [], []
+    seq_stats = []
     for seq in seqs:
         output_dir = os.path.join(
             data_root, '..', 'outputs', exp_name, seq) if save_images or save_videos else None
@@ -127,8 +151,9 @@ def main(opt,
             osp.join(data_root, seq), opt.img_size)
         result_filename = os.path.join(result_root, '{}.txt'.format(seq))
         frame_rate = 30
-        nf, ta, tc = eval_seq(opt, dataloader, data_type, result_filename,
-                              save_dir=output_dir, show_image=show_image, frame_rate=frame_rate)
+        nf, ta, tc, stats = eval_seq(opt, dataloader, data_type, result_filename,
+                                     save_dir=output_dir, show_image=show_image, frame_rate=frame_rate)
+        seq_stats.append((seq, stats))
         n_frame += nf
         timer_avgs.append(ta)
         timer_calls.append(tc)
@@ -152,6 +177,7 @@ def main(opt,
     print(strsummary)
     Evaluator.save_summary(summary, os.path.join(
         result_root, 'summary_{}.xlsx'.format(exp_name)))
+    save_assoc_stats(os.path.join(result_root, 'assoc_stats.csv'), seq_stats)
 
 
 if __name__ == '__main__':
