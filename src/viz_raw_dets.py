@@ -28,6 +28,7 @@ viz_raw_dets.py
 """
 
 import argparse
+import logging
 import os
 import os.path as osp
 import sys
@@ -43,6 +44,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(_here, '..', 'DCNv2')))
 
 import _init_paths
 from lib.tracker.multitracker import MCJDETracker, id2cls
+from lib.tracking_utils.log import logger
 import lib.datasets.dataset.jde as datasets
 from lib.opts import opts
 from reeval_visdrone import iou_matrix
@@ -186,6 +188,10 @@ def report(title, counts, low_scores, args):
 
 
 def main():
+    # tracker เขียน log ระดับ DEBUG ทุกเฟรมทุกคลาส (ราว 100 บรรทัดต่อเฟรม) ปิดไว้เหมือน track_AMOT.py
+    logger.setLevel(logging.INFO)
+    # ตอนส่ง output ลงไฟล์ (> log) print จะค้างใน buffer จนจบ ให้เขียนทันทีทีละบรรทัดแทน
+    sys.stdout.reconfigure(line_buffering=True)
     args = parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
     opt_dla, opt_yolo = build_opt(args, False), build_opt(args, True)
