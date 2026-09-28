@@ -16,6 +16,9 @@ reeval_visdrone.py
 ใช้ annotation ดิบของ VisDrone (ไม่ใช่ annotations_eval ที่ setup_visdrone_eval.py กรองไว้)
 เพราะต้องใช้ ignored region และคลาสอื่นๆ ด้วย
 
+--hota: คำนวณ HOTA / DetA / AssA ด้วย TrackEval (โค้ดทางการของ HOTA) โดยใช้กติกาเดียวกับ +ignore
+  (ต้องติดตั้งก่อน: pip install git+https://github.com/JonathonLuiten/TrackEval.git)
+
 นอกจากนี้จะนับจำนวน GT ต่อเฟรม (คลาส 1-10 ที่ DLA ทาย) เทียบกับเพดาน --K
 เพราะ mot_decode เลือก top-K รวมทุกคลาสต่อเฟรม (default --K 200) ส่วน YOLO ตัดที่ max_det=300
 
@@ -58,6 +61,9 @@ MODES = [
     ('+ignore', dict(all_frames=True,  unique_id=True,  per_class=True,  ignore=True)),
 ]
 
+# ค่าที่แสดงจาก HOTA (แต่ละตัวเฉลี่ยจาก IoU threshold 0.05–0.95 ตามนิยามของ HOTA)
+HOTA_FIELDS = ['HOTA', 'DetA', 'AssA', 'DetRe', 'DetPr', 'AssRe', 'AssPr']
+
 COUNT_METRICS = ['num_objects', 'num_predictions', 'num_detections', 'num_false_positives',
                  'num_misses', 'num_switches', 'idtp']
 
@@ -85,6 +91,19 @@ def split_by_frame(rows):
     frames, starts = np.unique(rows[:, FRAME].astype(np.int64), return_index=True)
     ends = list(starts[1:]) + [len(rows)]
     return {int(f): rows[s:e] for f, s, e in zip(frames, starts, ends)}
+
+
+def iou_matrix(a, b):
+    """IoU ระหว่างกล่อง tlwh (N, 4) กับ (M, 4) — ใช้ทั้ง HOTA ในไฟล์นี้และ eval_detection.py"""
+    ax1, ay1 = a[:, 0:1], a[:, 1:2]
+    ax2, ay2 = ax1 + a[:, 2:3], ay1 + a[:, 3:4]
+    bx1, by1 = b[:, 0], b[:, 1]
+    bx2, by2 = bx1 + b[:, 2], by1 + b[:, 3]
+    iw = np.clip(np.minimum(ax2, bx2) - np.maximum(ax1, bx1), 0, None)
+    ih = np.clip(np.minimum(ay2, by2) - np.maximum(ay1, by1), 0, None)
+    inter = iw * ih
+    union = a[:, 2:3] * a[:, 3:4] + b[:, 2] * b[:, 3] - inter
+    return inter / np.maximum(union, 1e-9)
 
 
 def to_pixels(tlwhs):
@@ -162,6 +181,28 @@ def eval_sequence(mh, gt, res, frames, unique_id, per_class):
     return total
 
 
+def hota_sequence(metric, gt, res, frames):
+    """
+    ส่ง 1 sequence × 1 คลาสให้ trackeval.metrics.HOTA (โค้ดทางการของ HOTA) คำนวณ
+    TrackEval ใช้ ID เป็นเลขช่องของตาราง จึงต้องแปลง ID ดิบ (เช่น 7, 152, 3001) ให้เรียงเป็น 0, 1, 2, ...
+    similarity ระหว่าง GT กับ track ในแต่ละเฟรม = IoU (เหมือนที่ TrackEval ใช้กับ MOTChallenge)
+    """
+    gt, res = gt.copy(), res.copy()
+    gt[:, TID] = np.unique(gt[:, TID], return_inverse=True)[1]
+    res[:, TID] = np.unique(res[:, TID], return_inverse=True)[1]
+    gt_by_f, res_by_f = split_by_frame(gt), split_by_frame(res)
+    data = {'num_gt_dets': len(gt), 'num_tracker_dets': len(res),
+            'num_gt_ids': int(gt[:, TID].max()) + 1 if len(gt) else 0,
+            'num_tracker_ids': int(res[:, TID].max()) + 1 if len(res) else 0,
+            'gt_ids': [], 'tracker_ids': [], 'similarity_scores': []}
+    for f in frames:
+        g, r = gt_by_f.get(f, EMPTY), res_by_f.get(f, EMPTY)
+        data['gt_ids'].append(g[:, TID].astype(int))
+        data['tracker_ids'].append(r[:, TID].astype(int))
+        data['similarity_scores'].append(iou_matrix(g[:, X:H + 1], r[:, X:H + 1]))
+    return metric.eval_sequence(data)
+
+
 def summarize(c):
     n_gt = max(c['num_objects'], 1)
     det = c['num_detections']
@@ -225,6 +266,8 @@ def main():
                         help='เพดานจำนวน detection ต่อเฟรมที่จะเทียบ (DLA --K 200, YOLO max_det 300)')
     parser.add_argument('--out_dir', default='',
                         help='ถ้าระบุ จะบันทึกตารางเป็น CSV ไว้ที่นี่')
+    parser.add_argument('--hota', action='store_true',
+                        help='คำนวณ HOTA / DetA / AssA ด้วยกติกาของโหมด +ignore (ต้อง pip install TrackEval)')
     args = parser.parse_args()
 
     gt_dir = osp.abspath(osp.expanduser(args.gt_dir))
@@ -263,6 +306,15 @@ def main():
     print('วัดผล {} sequence | runs: {} | modes: {}\n'.format(
         len(seqs), ', '.join(n for n, _ in runs), ', '.join(modes)))
 
+    hota_metric = None
+    if args.hota:
+        # TrackEval ยังใช้ np.float ซึ่งถูกลบไปใน NumPy 2.0 (แบบเดียวกับ np.asfarray ของ motmetrics ข้างบน)
+        if not hasattr(np, 'float'):
+            np.float = float
+        from trackeval.metrics import HOTA   # import เฉพาะตอนใช้ คนที่ไม่ใส่ --hota ไม่ต้องติดตั้ง
+        hota_metric = HOTA()
+    hota_res = {r: {} for r, _ in runs}                      # run -> {"seq/คลาส": ผล HOTA}
+
     mh = mm.metrics.create()
     counts = {(r, m): {} for r, _ in runs for m in modes}   # (run, mode) -> {seq: count dict}
     dropped = {r: {} for r, _ in runs}                       # run -> {seq: จำนวนกล่องที่ถูกตัด}
@@ -291,6 +343,16 @@ def main():
                     frames = sorted(f for f in res_frames if f >= 1)
                 counts[(name, m)][seq] = eval_sequence(mh, gt_m, res_m, frames,
                                                        cfg['unique_id'], cfg['per_class'])
+            if hota_metric is not None:
+                # กติกาเดียวกับโหมด +ignore: ตัด ignored region แล้ว, แยกคลาส, นับทุกเฟรม
+                res_kept = res[keep]
+                frames = sorted(set(res[:, FRAME].astype(np.int64).tolist())
+                                | set(eval_gt[:, FRAME].astype(np.int64).tolist()))
+                for cls in EVAL_CATEGORIES:
+                    g = eval_gt_kept[eval_gt_kept[:, CLS] == cls]
+                    r = res_kept[res_kept[:, CLS] == cls]
+                    if len(g) or len(r):
+                        hota_res[name]['{}/{}'.format(seq, cls)] = hota_sequence(hota_metric, g, r, frames)
 
     # ----- 1. ภาพรวม: ตัวเลขเปลี่ยนไปเท่าไรเมื่อแก้กติกาทีละข้อ -----
     print('\n=== Overall ({} seq) — legacy ควรตรงกับตัวเลขเดิมจาก track_AMOT.py ==='.format(len(seqs)))
@@ -304,6 +366,17 @@ def main():
                 [[r[0], r[1]] + ['{:.1f}'.format(v) for v in r[2:6]] + ['{:,}'.format(v) for v in r[6:]]
                  for r in overall_rows],
                 [10, 8, 5, 5, 5, 5, 9, 9, 7, 9])
+
+    # ----- 1b. HOTA: รวมทุก sequence × คลาส แบบถ่วงตามจำนวนกล่อง (= combine_classes_det_averaged ของ TrackEval) -----
+    hota_rows = []
+    if hota_metric is not None:
+        print('\n=== HOTA (กติกาเดียวกับ +ignore) — DetA = ตา, AssA = การต่อ ID, HOTA = √(DetA × AssA) ===')
+        for name, _ in runs:
+            combined = hota_metric.combine_sequences(hota_res[name])
+            hota_rows.append([name] + [100.0 * float(np.mean(combined[k])) for k in HOTA_FIELDS])
+        print_table(['run'] + HOTA_FIELDS,
+                    [[row[0]] + ['{:.1f}'.format(v) for v in row[1:]] for row in hota_rows],
+                    [12] + [6] * len(HOTA_FIELDS))
 
     # ----- 2. ราย sequence: โหมดแรกเทียบโหมดสุดท้าย (ดูว่า FP ที่หายไปกระจุกที่ไหน) -----
     first, last = modes[0], modes[-1]
@@ -347,6 +420,8 @@ def main():
                      ).to_csv(osp.join(out_dir, 'per_sequence.csv'), index=False)
         pd.DataFrame(dens_rows, columns=['sequence', 'frames', 'max_per_frame'] + k_cols + ['evalGT']
                      ).to_csv(osp.join(out_dir, 'gt_density.csv'), index=False)
+        if hota_rows:
+            pd.DataFrame(hota_rows, columns=['run'] + HOTA_FIELDS).to_csv(osp.join(out_dir, 'hota.csv'), index=False)
         print('\nบันทึก CSV ไว้ที่ {}'.format(out_dir))
 
 

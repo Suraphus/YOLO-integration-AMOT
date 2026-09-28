@@ -35,26 +35,13 @@ import os.path as osp
 
 import numpy as np
 
-from reeval_visdrone import (read_rows, split_by_frame, ignore_keep_masks, print_table,
+from reeval_visdrone import (read_rows, split_by_frame, ignore_keep_masks, print_table, iou_matrix,
                              EVAL_CATEGORIES, IGNORE_CATEGORIES, FRAME, X, W, H, SCORE, CLS)
 
 CLASS_NAMES = {1: 'pedestrian', 4: 'car', 5: 'van', 6: 'truck', 9: 'bus'}
 # ขนาดวัตถุ = √(w×h) ในภาพจริง (pixel)
 SIZE_BUCKETS = [('<16px', 0, 16), ('16-32px', 16, 32), ('32-64px', 32, 64), ('>64px', 64, np.inf)]
 EMPTY = np.zeros((0, 8))
-
-
-def iou_matrix(a, b):
-    """IoU ระหว่างกล่อง tlwh (N, 4) กับ (M, 4)"""
-    ax1, ay1 = a[:, 0:1], a[:, 1:2]
-    ax2, ay2 = ax1 + a[:, 2:3], ay1 + a[:, 3:4]
-    bx1, by1 = b[:, 0], b[:, 1]
-    bx2, by2 = bx1 + b[:, 2], by1 + b[:, 3]
-    iw = np.clip(np.minimum(ax2, bx2) - np.maximum(ax1, bx1), 0, None)
-    ih = np.clip(np.minimum(ay2, by2) - np.maximum(ay1, by1), 0, None)
-    inter = iw * ih
-    union = a[:, 2:3] * a[:, 3:4] + b[:, 2] * b[:, 3] - inter
-    return inter / np.maximum(union, 1e-9)
 
 
 def match_frame(dets, gts, iou_thr):

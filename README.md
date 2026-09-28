@@ -64,7 +64,7 @@ python run_tracking.py --video clip.mp4 --model visdrone.pth --output out.mp4
 ## เครื่องมือเสริม
 
 รายละเอียดวิธีใช้ดูได้จาก docstring ในแต่ละไฟล์ (`--help` ใช้ได้ทุกตัว):
-- `reeval_visdrone.py` — วัดผลใหม่จาก results/ แบบแยกคลาส + ตัด ignored region (ใกล้ toolkit ทางการ) และแสดงว่าแต่ละการแก้เปลี่ยนตัวเลขเท่าไร
+- `reeval_visdrone.py` — วัดผลใหม่จาก results/ แบบแยกคลาส + ตัด ignored region (ใกล้ toolkit ทางการ) และแสดงว่าแต่ละการแก้เปลี่ยนตัวเลขเท่าไร ใส่ `--hota` เพื่อได้ HOTA / DetA / AssA (ต้อง `pip install git+https://github.com/JonathonLuiten/TrackEval.git` ก่อน)
 - `eval_detection.py` — วัด detector อย่างเดียว (AP, precision ที่ recall เท่ากัน, recall ตามขนาด) จากกล่องดิบที่ `track_AMOT.py --dump_dets` บันทึกไว้ใน `results/<exp_name>/dets/`
 - `results/<exp_name>/assoc_stats.csv` (เขียนทุกครั้งที่รัน `track_AMOT.py`) — จำนวนการจับคู่แต่ละขั้นและการทำงานของ MTC ความหมายคอลัมน์ดู `ASSOC_STAT_KEYS` ใน `lib/tracker/multitracker.py`
 - `run_conf_ablation.sh` + `analyze_conf_ablation.py` — ไล่หาค่า `--yolo-conf` ที่สมดุลระหว่าง recall กับ fragmentation
