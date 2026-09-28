@@ -295,6 +295,7 @@ ASSOC_STAT_KEYS = [
     'mtc_fail_far',         # ตำแหน่งจาก ReID ห่างจาก Kalman เกิน 3 px
     'mtc_fail_overlap',     # ทับ detection (ไม่ควรเกิด เพราะโค้ดเทียบ IoU กับ 2)
     'mtc_reactivated',      # MTC กู้ track สำเร็จ
+    'mtc_disabled',         # ปิด MTC ด้วย --no_mtc → หลุดทันทีโดยไม่ผ่านด่านใดเลย
     'unconfirmed_match',    # track ใหม่ได้รับการยืนยันในเฟรมถัดไป
     'new_track',            # เปิด track ใหม่
 ]
@@ -550,8 +551,12 @@ class MCJDETracker(object):
             track_pool_dict[cls_id] = join_tracks(tracked_tracks_dict[cls_id], self.lost_tracks_dict[cls_id])
 
             ''' Step 2: First association, with embedding'''
-            dist_off = matching.reid_motion(track_pool_dict[cls_id], cls_detects, self.past_id_feature,
-                                            self.past_reg, h_out, w_out, height, width)
+            if getattr(self.opt, 'no_amc', False):
+                # ปิด AMC: cost_AMC = 1 ทุกคู่ → cost_IoU × 1 = cost_IoU เหมือนไม่มี AMC (ห้ามใช้ 0 = ตรงกันทุกคู่)
+                dist_off = np.ones((len(track_pool_dict[cls_id]), len(cls_detects)))
+            else:
+                dist_off = matching.reid_motion(track_pool_dict[cls_id], cls_detects, self.past_id_feature,
+                                                self.past_reg, h_out, w_out, height, width)
             dists = matching.embedding_distance(track_pool_dict[cls_id], cls_detects)
             dist_iou = matching.iou_distance(track_pool_dict[cls_id], cls_detects) * dist_off
             dist_iou = matching.fuse_score_three(dist_iou, dists, cls_detects)
@@ -609,6 +614,13 @@ class MCJDETracker(object):
                 if track.state == TrackState.Lost:
                     continue
                 self.assoc_stats['mtc_candidates'] += 1
+
+                if getattr(self.opt, 'no_mtc', False):
+                    # ปิด MTC: track ที่ไม่ได้คู่กลายเป็น "หลุด" ทันที เหมือน tracker ทั่วไป (ByteTrack) — ข้ามทุกด่านข้างล่าง
+                    self.assoc_stats['mtc_disabled'] += 1
+                    track.mark_lost()
+                    lost_tracks_dict[cls_id].append(track)
+                    continue
 
                 if self.frame_id - track.end_frame != 1:
                     self.assoc_stats['mtc_fail_gap'] += 1
@@ -679,8 +691,11 @@ class MCJDETracker(object):
                     lost_tracks_dict[cls_id].append(track)
 
             cls_detects = [cls_detects[i] for i in u_detection]
-            dist_off = matching.reid_motion_unconfirmed(unconfirmed_dict[cls_id], cls_detects, self.past_id_feature,
-                                                        self.past_reg, h_out, w_out, height, width)
+            if getattr(self.opt, 'no_amc', False):
+                dist_off = np.ones((len(unconfirmed_dict[cls_id]), len(cls_detects)))
+            else:
+                dist_off = matching.reid_motion_unconfirmed(unconfirmed_dict[cls_id], cls_detects, self.past_id_feature,
+                                                            self.past_reg, h_out, w_out, height, width)
             dist_iou = matching.iou_distance(unconfirmed_dict[cls_id], cls_detects) * dist_off
             matches, u_unconfirmed, u_detection = matching.linear_assignment(dist_iou, thresh=0.5)
             self.assoc_stats['unconfirmed_match'] += len(matches)

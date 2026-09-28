@@ -225,6 +225,13 @@ class opts(object):
                                  action='store_true',
                                  help='บันทึกกล่องดิบของ detector (ก่อนแบ่ง high/low) ไว้ที่ '
                                       'results/<exp_name>/dets/<seq>.txt สำหรับ eval_detection.py')
+        # ablation: ปิดส่วนประกอบของ AMOT ทีละตัว (ไม่ใส่ = ใช้ครบตาม paper)
+        self.parser.add_argument('--no_amc',
+                                 action='store_true',
+                                 help='ปิด AMC: ใช้ cost_AMC = 1 ทุกคู่ การจับคู่ขั้นแรกและการยืนยัน track ใหม่เหลือแค่ IoU (+ ReID)')
+        self.parser.add_argument('--no_mtc',
+                                 action='store_true',
+                                 help='ปิด MTC: track ที่ไม่ได้คู่กลายเป็น "หลุด" ทันที ไม่มีการกู้ด้วย ReID + Kalman')
 
         # loss
         self.parser.add_argument('--mse_loss',  # default: false
