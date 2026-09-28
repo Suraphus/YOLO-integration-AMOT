@@ -63,10 +63,13 @@ def eval_seq(opt,
              result_f_name,
              save_dir=None,
              show_image=True,
-             frame_rate=30):
+             frame_rate=30,
+             oracle_file=None):
     if save_dir:
         mkdir_if_missing(save_dir)
     tracker = MCJDETracker(opt, frame_rate)
+    if oracle_file:
+        tracker.load_oracle(oracle_file)
     timer = Timer()
     results_dict = defaultdict(list)
     frame_dets = []
@@ -167,8 +170,11 @@ def main(opt,
             osp.join(data_root, seq), opt.img_size)
         result_filename = os.path.join(result_root, '{}.txt'.format(seq))
         frame_rate = 30
+        # Oracle ใช้ GT ชุดเดียวกับที่ Evaluator ใช้วัดผล (setup_visdrone_eval.py กรองไว้แล้ว)
+        oracle_file = osp.join(data_root, '..', 'annotations_eval', seq + '.txt') if opt.oracle else None
         nf, ta, tc, stats = eval_seq(opt, dataloader, data_type, result_filename,
-                                     save_dir=output_dir, show_image=show_image, frame_rate=frame_rate)
+                                     save_dir=output_dir, show_image=show_image, frame_rate=frame_rate,
+                                     oracle_file=oracle_file)
         seq_stats.append((seq, stats))
         n_frame += nf
         timer_avgs.append(ta)

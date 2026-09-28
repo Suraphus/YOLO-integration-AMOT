@@ -232,6 +232,10 @@ class opts(object):
         self.parser.add_argument('--no_mtc',
                                  action='store_true',
                                  help='ปิด MTC: track ที่ไม่ได้คู่กลายเป็น "หลุด" ทันที ไม่มีการกู้ด้วย ReID + Kalman')
+        self.parser.add_argument('--oracle',
+                                 action='store_true',
+                                 help='ใช้กล่องจาก GT (<split>/annotations_eval) แทน detector score = 1 ทุกกล่อง '
+                                      'ReID ยังมาจาก DLA — ใช้หาเพดานของส่วนจับคู่')
 
         # loss
         self.parser.add_argument('--mse_loss',  # default: false

@@ -329,6 +329,11 @@ class MCJDETracker(object):
             self.detector = None
             print('ใช้ mot_decode เดิมของ AMOT (baseline, ไม่ใช้ YOLO)')
 
+        # ----- Oracle: กล่องจาก GT แทน detector ({frame: [x1, y1, x2, y2, cls_id]}) ใส่ด้วย load_oracle ทีละ sequence -----
+        self.oracle = None
+        if getattr(opt, 'oracle', False) and self.use_yolo:
+            raise ValueError('--oracle ใช้กล่องจาก GT แทน detector จึงใส่คู่กับ --use_yolo ไม่ได้')
+
         self.tracked_tracks_dict = defaultdict(list)
         self.lost_tracks_dict = defaultdict(list)
         self.removed_tracks_dict = defaultdict(list)
@@ -389,6 +394,18 @@ class MCJDETracker(object):
                 'detection จะถูกจัดเข้าคลาสผิดแบบเงียบๆ โปรดตรวจสอบ data.yaml ที่ใช้เทรน YOLO ให้ดีก่อนเชื่อผลลัพธ์'
                 .format(mismatches)
             )
+
+    def load_oracle(self, gt_file):
+        """
+        โหมด Oracle: อ่านกล่องจาก GT (annotations_eval ที่ setup_visdrone_eval.py กรองไว้) มาใช้แทน detector
+        GT: frame,id,x,y,w,h,flag,category,... → {frame: [x1, y1, x2, y2, cls_id]}, cls_id = category − 1 (ตรงกับ id2cls)
+        ใช้แค่ตำแหน่งกับคลาส ไม่ใช้ ID ของ GT — tracker ยังต้องจับคู่เองทุกเฟรม
+        """
+        rows = np.loadtxt(gt_file, delimiter=',', ndmin=2)
+        self.oracle = {}
+        for f in np.unique(rows[:, 0]).astype(int):
+            r = rows[rows[:, 0] == f]
+            self.oracle[int(f)] = np.stack([r[:, 2], r[:, 3], r[:, 2] + r[:, 4], r[:, 3] + r[:, 5], r[:, 7] - 1], axis=1)
 
     def reset(self):
         self.tracked_tracks_dict = defaultdict(list)
@@ -457,13 +474,21 @@ class MCJDETracker(object):
             self.past_id_feature.append(id_feature)
             self.past_reg.append(reg)  # AMC/MTC ยังใช้ dense map ตามเดิม ไม่แตะ ไม่ว่าจะใช้ detector ไหน
 
-            if self.use_yolo:
-                # ----- ใช้ YOLO เป็น detector -----
-                yolo_res = self.detector.predict(img_0, conf=getattr(self.opt, 'yolo_conf', 0.1), imgsz=960, verbose=False)[0]
-                boxes_xyxy = yolo_res.boxes.xyxy.cpu().numpy()
-                scores = yolo_res.boxes.conf.cpu().numpy()
-                yolo_cls = yolo_res.boxes.cls.cpu().numpy().astype(int)
+            if self.oracle is not None or self.use_yolo:
+                if self.oracle is not None:
+                    # ----- Oracle: กล่องจาก GT ของเฟรมนี้ score = 1 ทุกกล่อง (ไม่ใช้ ID ของ GT) -----
+                    gt = self.oracle.get(self.frame_id, np.zeros((0, 5)))
+                    boxes_xyxy = gt[:, :4].astype(np.float32)
+                    scores = np.ones(len(gt), dtype=np.float32)
+                    det_cls = gt[:, 4].astype(int)
+                else:
+                    # ----- ใช้ YOLO เป็น detector -----
+                    yolo_res = self.detector.predict(img_0, conf=getattr(self.opt, 'yolo_conf', 0.1), imgsz=960, verbose=False)[0]
+                    boxes_xyxy = yolo_res.boxes.xyxy.cpu().numpy()
+                    scores = yolo_res.boxes.conf.cpu().numpy()
+                    det_cls = yolo_res.boxes.cls.cpu().numpy().astype(int)
 
+                # กล่องจากภายนอก (YOLO หรือ GT): หยิบ ReID จากแผนที่ของ DLA ตรงจุดกลางกล่อง
                 grid_boxes = orig2map(boxes_xyxy, h_out, w_out, height, width)
                 cx = ((grid_boxes[:, 0] + grid_boxes[:, 2]) / 2).clip(0, w_out - 1).astype(np.int64)
                 cy = ((grid_boxes[:, 1] + grid_boxes[:, 3]) / 2).clip(0, h_out - 1).astype(np.int64)
@@ -471,9 +496,9 @@ class MCJDETracker(object):
 
                 sampled_feat = _tranpose_and_gather_feat(id_feature, flat_inds).squeeze(0).cpu().numpy()
 
-                dets_np = np.concatenate([boxes_xyxy, scores[:, None], yolo_cls[:, None]], axis=1)
-                dets = {cls_id: dets_np[yolo_cls == cls_id] for cls_id in range(self.opt.num_classes)}
-                cls_id_feats = [sampled_feat[yolo_cls == cls_id] for cls_id in range(self.opt.num_classes)]
+                dets_np = np.concatenate([boxes_xyxy, scores[:, None], det_cls[:, None]], axis=1)
+                dets = {cls_id: dets_np[det_cls == cls_id] for cls_id in range(self.opt.num_classes)}
+                cls_id_feats = [sampled_feat[det_cls == cls_id] for cls_id in range(self.opt.num_classes)]
 
             else:
                 # ----- baseline: mot_decode เดิมของ AMOT (DLA heatmap เท่านั้น) -----
