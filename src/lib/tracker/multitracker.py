@@ -495,6 +495,9 @@ class MCJDETracker(object):
 
                 dets = map2orig(dets, h_out, w_out, height, width, self.opt.num_classes)
 
+        # กล่องดิบของทั้งเฟรม [x1, y1, x2, y2, score, cls] ก่อนแบ่ง high/low — track_AMOT.py --dump_dets เขียนลงไฟล์
+        self.frame_dets = np.concatenate([dets[cls_id] for cls_id in range(self.opt.num_classes)], axis=0)
+
         # ----- parse each object class (ใช้ได้กับทั้ง 2 ทาง เพราะ format ตรงกัน) -----
         for cls_id in range(self.opt.num_classes):
             cls_dets = dets[cls_id]

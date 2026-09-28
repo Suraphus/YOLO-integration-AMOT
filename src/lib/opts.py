@@ -221,6 +221,10 @@ class opts(object):
         self.parser.add_argument('--save_images',
                                  action='store_true',
                                  help='บันทึกภาพผลทุกเฟรมไว้ที่ outputs/<exp_name> (~2.4 GB ต่อรอบบน test_dev)')
+        self.parser.add_argument('--dump_dets',
+                                 action='store_true',
+                                 help='บันทึกกล่องดิบของ detector (ก่อนแบ่ง high/low) ไว้ที่ '
+                                      'results/<exp_name>/dets/<seq>.txt สำหรับ eval_detection.py')
 
         # loss
         self.parser.add_argument('--mse_loss',  # default: false

@@ -47,6 +47,16 @@ def write_results_dict(file_name, results_dict, data_type, num_classes=10):
                     f.write(line)
     logger.info('save results to {}'.format(file_name))
 
+def write_dets(file_name, frame_dets):
+    """กล่องดิบของ detector ต่อเฟรม: frame,-1,x,y,w,h,score,category (category = cls_id + 1 ตาม VisDrone)"""
+    mkdir_if_missing(osp.dirname(file_name))
+    with open(file_name, 'w') as f:
+        for frame_id, dets in frame_dets:
+            for x1, y1, x2, y2, score, cls_id in dets:
+                f.write('{},-1,{:.2f},{:.2f},{:.2f},{:.2f},{:.4f},{}\n'.format(
+                    frame_id, x1, y1, x2 - x1, y2 - y1, score, int(cls_id) + 1))
+    logger.info('save raw detections to {}'.format(file_name))
+
 def eval_seq(opt,
              data_loader,
              data_type,
@@ -59,6 +69,7 @@ def eval_seq(opt,
     tracker = MCJDETracker(opt, frame_rate)
     timer = Timer()
     results_dict = defaultdict(list)
+    frame_dets = []
     frame_id = 0
     for path, img, img0 in data_loader:
         if frame_id % 30 == 0 and frame_id != 0:
@@ -70,6 +81,8 @@ def eval_seq(opt,
         timer.tic()
         online_targets_dict = tracker.update_tracking(blob, img0)
         timer.toc()
+        if opt.dump_dets:
+            frame_dets.append((frame_id, tracker.frame_dets))
         online_tlwhs_dict = defaultdict(list)
         online_ids_dict = defaultdict(list)
         online_scores_dict = defaultdict(list)
@@ -103,6 +116,9 @@ def eval_seq(opt,
             if save_dir is not None:
                 cv2.imwrite(os.path.join(save_dir, '{:05d}.jpg'.format(frame_id)), online_im)
     write_results_dict(result_f_name, results_dict, data_type)
+    if opt.dump_dets:
+        # ไว้ในโฟลเดอร์ย่อย dets/ เพื่อไม่ให้ reeval_visdrone.py (อ่าน results/<exp>/*.txt) เข้าใจผิดว่าเป็นผล tracking
+        write_dets(osp.join(osp.dirname(result_f_name), 'dets', osp.basename(result_f_name)), frame_dets)
     return frame_id, timer.average_time, timer.calls, tracker.assoc_stats
 
 def save_assoc_stats(file_name, seq_stats):
