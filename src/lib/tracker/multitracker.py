@@ -483,7 +483,8 @@ class MCJDETracker(object):
                     det_cls = gt[:, 4].astype(int)
                 else:
                     # ----- ใช้ YOLO เป็น detector -----
-                    yolo_res = self.detector.predict(img_0, conf=getattr(self.opt, 'yolo_conf', 0.1), imgsz=960, verbose=False)[0]
+                    yolo_res = self.detector.predict(img_0, conf=getattr(self.opt, 'yolo_conf', 0.1),
+                                                     imgsz=getattr(self.opt, 'yolo_imgsz', 960), verbose=False)[0]
                     boxes_xyxy = yolo_res.boxes.xyxy.cpu().numpy()
                     scores = yolo_res.boxes.conf.cpu().numpy()
                     det_cls = yolo_res.boxes.cls.cpu().numpy().astype(int)

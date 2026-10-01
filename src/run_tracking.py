@@ -74,6 +74,8 @@ def parse_args():
                         help='path ของ YOLO weight (best.pt)')
     parser.add_argument('--yolo-conf', type=float, default=0.1,
                         help='confidence threshold ของ YOLO (default 0.1)')
+    parser.add_argument('--yolo-imgsz', type=int, default=960,
+                        help='ขนาดภาพที่ส่งเข้า YOLO ควรตรงกับ imgsz ตอนเทรน weight นั้น (default 960)')
 
     return parser.parse_args()
 
@@ -91,6 +93,7 @@ def build_opt(args):
     opt.use_yolo = args.use_yolo
     opt.yolo_model = args.yolo_model
     opt.yolo_conf = args.yolo_conf
+    opt.yolo_imgsz = args.yolo_imgsz
 
     return opt
 

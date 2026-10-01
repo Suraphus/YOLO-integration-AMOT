@@ -169,6 +169,8 @@ class opts(object):
 	# detector
         self.parser.add_argument('--use_yolo', action='store_true', help='use yolo as detector')
         self.parser.add_argument('--yolo_model', type=str, default='', help='path to yolo weight')
+        self.parser.add_argument('--yolo_imgsz', type=int, default=960,
+                                 help='ขนาดภาพที่ส่งเข้า YOLO ควรตรงกับ imgsz ตอนเทรน weight นั้น (default 960)')
 
         # 测试阶段的输入数据模式: video or image dir
         self.parser.add_argument('--input-mode',
